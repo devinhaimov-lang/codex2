@@ -7,6 +7,13 @@ All notable changes to Cockpit Tools will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
+## [0.24.4] - 2026-05-22
+
+### Fixed
+- **Release publishing no longer fails after successful Windows builds when updater signature assets are unavailable**: merged latest.json generation is treated as optional, checksum publishing can continue, and draft releases can be published after installer assets are uploaded.
+- **Homebrew cask automation is disabled for this custom release flow**: Windows installer publishing is no longer blocked by macOS cask update steps.
+
+---
 ## [0.24.3] - 2026-05-21
 
 ### Changed

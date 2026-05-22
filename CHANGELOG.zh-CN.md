@@ -7,6 +7,13 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
 ---
+## [0.24.4] - 2026-05-22
+
+### 修复
+- **当更新签名资产不可用时，Release 发布不再在 Windows 构建成功后失败**：合并版 latest.json 生成改为可选步骤，校验和上传可继续执行，安装包资产上传后可正常发布草稿 Release。
+- **此自定义发布流程已禁用 Homebrew Cask 自动更新**：Windows 安装包发布不再被 macOS cask 更新步骤阻塞。
+
+---
 ## [0.24.3] - 2026-05-21
 
 ### 变更

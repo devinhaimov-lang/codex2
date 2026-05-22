@@ -220,7 +220,9 @@ jobs:
           echo "PUBLISHED_AT=${PUBLISHED_AT}" >> "$GITHUB_ENV"
 
       - name: Build merged latest.json
+        id: build_latest_json
         shell: bash
+        continue-on-error: true
         run: |
           set -euo pipefail
           node scripts/release/build_merged_latest_json.cjs \
@@ -232,6 +234,7 @@ jobs:
             --output "latest.json"
 
       - name: Validate merged latest.json
+        if: steps.build_latest_json.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -250,6 +253,7 @@ jobs:
           jq -r '.platforms | keys[]' latest.json
 
       - name: Upload merged latest.json
+        if: steps.build_latest_json.outcome == 'success'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
@@ -261,7 +265,6 @@ jobs:
     name: Upload SHA256SUMS
     needs:
       - release
-      - rebuild-latest-json
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -327,10 +330,9 @@ jobs:
     name: Update Homebrew Cask
     needs:
       - release
-      - rebuild-latest-json
       - upload-checksums
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: false
     permissions:
       contents: write
       pull-requests: write
@@ -420,7 +422,7 @@ jobs:
     name: Publish release as latest
     needs:
       - release
-      - rebuild-latest-json
+      - upload-checksums
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
