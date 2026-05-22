@@ -3,6 +3,7 @@ import './App.css';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { GlobalModal } from './components/GlobalModal';
+import { LiteUnlockGate } from './components/LiteUnlockGate';
 import { CodexIcon } from './components/icons/CodexIcon';
 import { changeLanguage, getCurrentLanguage, normalizeLanguage, supportedLanguages } from './i18n';
 
@@ -200,7 +201,8 @@ export default function LiteApp() {
   };
 
   return (
-    <div className="lite-app-shell">
+    <LiteUnlockGate>
+      <div className="lite-app-shell">
       <aside className="lite-sidebar">
         <div className="lite-brand">
           <CodexIcon size={24} />
@@ -233,7 +235,8 @@ export default function LiteApp() {
         </Suspense>
       </main>
 
-      <GlobalModal />
-    </div>
+        <GlobalModal />
+      </div>
+    </LiteUnlockGate>
   );
 }

@@ -5,6 +5,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tauri::Manager;
 use tauri_plugin_autostart::ManagerExt as _;
 use url::Url;
@@ -319,6 +320,83 @@ const AUTO_SWITCH_ACCOUNT_SCOPE_SELECTED: &str = "selected_accounts";
 static ANTIGRAVITY_VERSION_INFO_CACHE: OnceLock<
     Mutex<HashMap<String, AntigravityInstalledVersionInfo>>,
 > = OnceLock::new();
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiteUnlockChallenge {
+    #[serde(rename = "machineCode")]
+    pub machine_code: String,
+}
+
+const LITE_UNLOCK_SALT: &str = "codex-lite-unlock-v1:7c5a9e41d8f64b32";
+const LITE_UNLOCK_ALPHABET: &[u8] = b"23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+
+fn normalize_lite_unlock_value(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .map(|ch| ch.to_ascii_uppercase())
+        .collect()
+}
+
+fn format_lite_unlock_chunks(value: &str) -> String {
+    value
+        .as_bytes()
+        .chunks(4)
+        .map(|chunk| std::str::from_utf8(chunk).unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+fn lite_unlock_digest_hex(input: &str) -> String {
+    let digest = Sha256::digest(input.as_bytes());
+    digest.iter().map(|byte| format!("{:02X}", byte)).collect()
+}
+
+fn lite_unlock_seed(app: &tauri::AppHandle) -> String {
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let host = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_default();
+    let user = std::env::var("USERNAME")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_default();
+    format!("codex-lite-device|{}|{}|{}", config_dir, host, user)
+}
+
+fn lite_unlock_machine_code(app: &tauri::AppHandle) -> String {
+    let raw = lite_unlock_digest_hex(&lite_unlock_seed(app));
+    format_lite_unlock_chunks(&raw[..12])
+}
+
+fn lite_unlock_expected_code(machine_code: &str) -> String {
+    let normalized_machine_code = normalize_lite_unlock_value(machine_code);
+    let digest =
+        Sha256::digest(format!("{}|{}", LITE_UNLOCK_SALT, normalized_machine_code).as_bytes());
+    let mut code = String::with_capacity(12);
+    for byte in digest.iter().take(12) {
+        let index = (*byte as usize) % LITE_UNLOCK_ALPHABET.len();
+        code.push(LITE_UNLOCK_ALPHABET[index] as char);
+    }
+    format_lite_unlock_chunks(&code)
+}
+
+#[tauri::command]
+pub fn get_lite_unlock_challenge(app: tauri::AppHandle) -> Result<LiteUnlockChallenge, String> {
+    Ok(LiteUnlockChallenge {
+        machine_code: lite_unlock_machine_code(&app),
+    })
+}
+
+#[tauri::command]
+pub fn verify_lite_unlock_code(app: tauri::AppHandle, code: String) -> Result<bool, String> {
+    let machine_code = lite_unlock_machine_code(&app);
+    let expected = lite_unlock_expected_code(&machine_code);
+    Ok(normalize_lite_unlock_value(&code) == normalize_lite_unlock_value(&expected))
+}
 
 fn trim_non_empty(value: &str) -> Option<String> {
     let trimmed = value.trim();

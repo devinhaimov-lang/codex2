@@ -71,7 +71,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_deep_link::init()) 
+        .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
             info!("Cockpit Tools 启动...");
             let current_exe = std::env::current_exe()
@@ -361,6 +361,8 @@ pub fn run() {
             commands::data_transfer::data_transfer_replace_instance_store,
             commands::provider_current::get_provider_current_account_id,
             // System Commands
+            commands::system::get_lite_unlock_challenge,
+            commands::system::verify_lite_unlock_code,
             commands::system::open_data_folder,
             commands::system::save_text_file,
             commands::system::get_downloads_dir,
