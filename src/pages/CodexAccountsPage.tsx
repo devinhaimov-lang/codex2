@@ -232,6 +232,7 @@ const CODEX_TOKEN_BATCH_EXAMPLE = `[
     "last_used": 1730000000
   }
 ]`;
+const CHATGPT_SESSION_URL = "https://chatgpt.com/api/auth/session";
 const OPENAI_OFFICIAL_PRESET_ID = "openai_official";
 const COCKPIT_API_BASE_URL = "https://chongcodex.cn/v1";
 
@@ -713,6 +714,7 @@ export function CodexAccountsPage() {
   const [reauthTargetAccount, setReauthTargetAccount] =
     useState<CodexAccount | null>(null);
   const [reauthEmailCopied, setReauthEmailCopied] = useState(false);
+  const [sessionUrlCopied, setSessionUrlCopied] = useState(false);
   const {
     message: accountNoteError,
     scrollKey: accountNoteErrorScrollKey,
@@ -823,10 +825,11 @@ export function CodexAccountsPage() {
   const reauthTargetEmail = reauthTargetAccount?.email?.trim() ?? "";
 
   const openCodexAddModal = useCallback(
-    (tab: string, targetAccount?: CodexAccount | null) => {
+    (_tab: string, targetAccount?: CodexAccount | null) => {
       setReauthTargetAccount(targetAccount ?? null);
       setReauthEmailCopied(false);
-      openAddModal(tab);
+      setSessionUrlCopied(false);
+      openAddModal("token");
     },
     [openAddModal],
   );
@@ -834,6 +837,7 @@ export function CodexAccountsPage() {
   const closeCodexAddModal = useCallback(() => {
     setReauthTargetAccount(null);
     setReauthEmailCopied(false);
+    setSessionUrlCopied(false);
     closeAddModal();
   }, [closeAddModal]);
 
@@ -846,10 +850,19 @@ export function CodexAccountsPage() {
     } catch {}
   }, [reauthTargetEmail]);
 
+  const handleCopySessionUrl = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(CHATGPT_SESSION_URL);
+      setSessionUrlCopied(true);
+      window.setTimeout(() => setSessionUrlCopied(false), 1200);
+    } catch {}
+  }, []);
+
   useEffect(() => {
     if (showAddModal) return;
     setReauthTargetAccount(null);
     setReauthEmailCopied(false);
+    setSessionUrlCopied(false);
   }, [showAddModal]);
 
   useEffect(() => {
@@ -8346,44 +8359,6 @@ export function CodexAccountsPage() {
                     <X />
                   </button>
                 </div>
-                <div className="modal-tabs">
-                  <button
-                    className={`modal-tab ${addTab === "oauth" ? "active" : ""}`}
-                    onClick={() => openCodexAddModal("oauth")}
-                  >
-                    <Globe size={14} />
-                    <span className="modal-tab-label">
-                      {t("common.shared.addModal.oauth", "OAuth Authorization")}
-                    </span>
-                  </button>
-                  <button
-                    className={`modal-tab ${addTab === "token" ? "active" : ""}`}
-                    onClick={() => openCodexAddModal("token")}
-                  >
-                    <FileText size={14} />
-                    <span className="modal-tab-label">
-                      {t("common.shared.addModal.token", "Token / JSON")}
-                    </span>
-                  </button>
-                  <button
-                    className={`modal-tab ${addTab === "apikey" ? "active" : ""}`}
-                    onClick={() => openCodexAddModal("apikey")}
-                  >
-                    <KeyRound size={14} />
-                    <span className="modal-tab-label">
-                      {t("codex.addModal.token", "API Key")}
-                    </span>
-                  </button>
-                  <button
-                    className={`modal-tab ${addTab === "import" ? "active" : ""}`}
-                    onClick={() => openCodexAddModal("import")}
-                  >
-                    <Database size={14} />
-                    <span className="modal-tab-label">
-                      {t("accounts.tabs.import", "本地导入")}
-                    </span>
-                  </button>
-                </div>
                 <div className="modal-body">
                   <MfaQuickCodeSelect />
                   {addTab === "oauth" && (
@@ -8852,6 +8827,42 @@ export function CodexAccountsPage() {
                           "粘贴 auth.json、账号 JSON、Sub2API JSON、accessToken 或 refresh_token。",
                         )}
                       </p>
+                      <div className="oauth-link">
+                        <label>
+                          {t("codex.token.sessionUrlLabel", "Session 地址")}
+                        </label>
+                        <div className="oauth-url-box">
+                          <input
+                            type="text"
+                            value={CHATGPT_SESSION_URL}
+                            readOnly
+                            aria-label={t(
+                              "codex.token.sessionUrlLabel",
+                              "Session 地址",
+                            )}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void handleCopySessionUrl()}
+                            title={
+                              sessionUrlCopied
+                                ? t("common.copied", "已复制")
+                                : t("common.copy", "复制")
+                            }
+                            aria-label={
+                              sessionUrlCopied
+                                ? t("common.copied", "已复制")
+                                : t("common.copy", "复制")
+                            }
+                          >
+                            {sessionUrlCopied ? (
+                              <Check size={16} />
+                            ) : (
+                              <Copy size={16} />
+                            )}
+                          </button>
+                        </div>
+                      </div>
                       <details className="token-format-collapse">
                         <summary className="token-format-collapse-summary">
                           {t(
