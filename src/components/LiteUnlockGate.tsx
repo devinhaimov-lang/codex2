@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { Check, Copy, LockKeyhole, RefreshCw } from 'lucide-react';
-import { CodexIcon } from './icons/CodexIcon';
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { Check, Copy, LockKeyhole, RefreshCw } from "lucide-react";
+import codexLiteQrCode from "../assets/codex-lite-qrcode.png";
+import { CodexIcon } from "./icons/CodexIcon";
 
 type LiteUnlockChallenge = {
   machineCode: string;
@@ -11,32 +12,56 @@ type LiteUnlockGateProps = {
   children: ReactNode;
 };
 
-const UNLOCK_SESSION_KEY = 'codex-lite.unlock.accepted.v1';
+type SavedUnlockCode = {
+  machineCode: string;
+  code: string;
+};
+
+const UNLOCK_CODE_KEY = "codex-lite.unlock.saved-code.v1";
+
+function readSavedUnlockCode(): SavedUnlockCode | null {
+  try {
+    const raw = localStorage.getItem(UNLOCK_CODE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<SavedUnlockCode>;
+    if (!parsed.machineCode || !parsed.code) return null;
+    return { machineCode: parsed.machineCode, code: parsed.code };
+  } catch {
+    return null;
+  }
+}
+
+function saveUnlockCode(machineCode: string, code: string) {
+  try {
+    localStorage.setItem(UNLOCK_CODE_KEY, JSON.stringify({ machineCode, code }));
+  } catch {}
+}
 
 export function LiteUnlockGate({ children }: LiteUnlockGateProps) {
-  const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem(UNLOCK_SESSION_KEY) === '1');
-  const [machineCode, setMachineCode] = useState('');
-  const [code, setCode] = useState('');
-  const [loading, setLoading] = useState(!unlocked);
+  const [unlocked, setUnlocked] = useState(false);
+  const [machineCode, setMachineCode] = useState("");
+  const [code, setCode] = useState("");
+  const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
 
   const normalizedCode = useMemo(() => code.trim().toUpperCase(), [code]);
 
   const loadChallenge = useCallback(async () => {
-    if (unlocked) return;
     setLoading(true);
-    setError('');
+    setError("");
     try {
-      const challenge = await invoke<LiteUnlockChallenge>('get_lite_unlock_challenge');
+      const challenge = await invoke<LiteUnlockChallenge>("get_lite_unlock_challenge");
+      const saved = readSavedUnlockCode();
       setMachineCode(challenge.machineCode);
+      setCode(saved?.machineCode === challenge.machineCode ? saved.code : "");
     } catch (err) {
       setError(`读取机器码失败：${String(err)}`);
     } finally {
       setLoading(false);
     }
-  }, [unlocked]);
+  }, []);
 
   useEffect(() => {
     void loadChallenge();
@@ -55,14 +80,14 @@ export function LiteUnlockGate({ children }: LiteUnlockGateProps) {
     event.preventDefault();
     if (!normalizedCode || submitting) return;
     setSubmitting(true);
-    setError('');
+    setError("");
     try {
-      const ok = await invoke<boolean>('verify_lite_unlock_code', { code: normalizedCode });
+      const ok = await invoke<boolean>("verify_lite_unlock_code", { code: normalizedCode });
       if (!ok) {
-        setError('验证码不正确');
+        setError("验证码不正确");
         return;
       }
-      sessionStorage.setItem(UNLOCK_SESSION_KEY, '1');
+      saveUnlockCode(machineCode, normalizedCode);
       setUnlocked(true);
     } catch (err) {
       setError(`验证失败：${String(err)}`);
@@ -84,17 +109,25 @@ export function LiteUnlockGate({ children }: LiteUnlockGateProps) {
           </div>
         </div>
 
+        <div className="lite-unlock-notice">
+          <div className="lite-unlock-notice-text">
+            <strong>关注“小怪不懂经典”公众号</strong>
+            <span>发送机器码获取验证码</span>
+          </div>
+          <img className="lite-unlock-qr" src={codexLiteQrCode} alt="小怪不懂经典公众号二维码" />
+        </div>
+
         <div className="lite-unlock-field">
           <label>机器码</label>
           <div className="lite-unlock-copy-row">
-            <input value={loading ? '正在生成...' : machineCode} readOnly />
+            <input value={loading ? "正在生成..." : machineCode} readOnly />
             <button
               type="button"
               className="lite-unlock-icon-btn"
               onClick={() => void handleCopyMachineCode()}
               disabled={!machineCode || loading}
-              title={copied ? '已复制' : '复制机器码'}
-              aria-label={copied ? '已复制' : '复制机器码'}
+              title={copied ? "已复制" : "复制机器码"}
+              aria-label={copied ? "已复制" : "复制机器码"}
             >
               {copied ? <Check size={16} /> : <Copy size={16} />}
             </button>
@@ -118,7 +151,7 @@ export function LiteUnlockGate({ children }: LiteUnlockGateProps) {
         <button
           type="submit"
           className="lite-unlock-submit"
-          disabled={loading || submitting || !normalizedCode}
+          disabled={loading || submitting || !normalizedCode || !machineCode}
         >
           {submitting ? <RefreshCw size={16} className="loading-spinner" /> : <LockKeyhole size={16} />}
           进入
