@@ -25,6 +25,12 @@ pub enum CodexLocalAccessScope {
     Lan,
 }
 
+#[cfg(target_os = "windows")]
+fn default_access_scope_for_existing_config() -> CodexLocalAccessScope {
+    CodexLocalAccessScope::Localhost
+}
+
+#[cfg(not(target_os = "windows"))]
 fn default_access_scope_for_existing_config() -> CodexLocalAccessScope {
     CodexLocalAccessScope::Lan
 }

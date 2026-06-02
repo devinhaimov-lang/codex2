@@ -3603,6 +3603,31 @@ async fn bind_gateway_listener(bind_host: &str, port: u16) -> Result<TcpListener
     }
 }
 
+#[cfg(target_os = "windows")]
+fn should_fallback_lan_bind_to_localhost(bind_host: &str, error: &std::io::Error) -> bool {
+    bind_host == CODEX_LOCAL_ACCESS_LAN_BIND_HOST && error.raw_os_error() == Some(10013)
+}
+
+fn gateway_bind_matches_requested(
+    actual_bind_host: Option<&str>,
+    requested_bind_host: &str,
+) -> bool {
+    if actual_bind_host == Some(requested_bind_host) {
+        return true;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        requested_bind_host == CODEX_LOCAL_ACCESS_LAN_BIND_HOST
+            && actual_bind_host == Some(CODEX_LOCAL_ACCESS_LOCALHOST_BIND_HOST)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
+}
+
 fn format_gateway_bind_error(bind_host: &str, port: u16, error: &std::io::Error) -> String {
     if error.kind() == std::io::ErrorKind::AddrInUse {
         return format!(
@@ -3846,10 +3871,10 @@ async fn ensure_gateway_matches_runtime() -> Result<(), String> {
         return Ok(());
     }
 
-    let bind_host = bind_host_for_collection(&collection);
+    let requested_bind_host = bind_host_for_collection(&collection);
     if running
         && actual_port == Some(collection.port)
-        && actual_bind_host.as_deref() == Some(bind_host)
+        && gateway_bind_matches_requested(actual_bind_host.as_deref(), requested_bind_host)
     {
         return Ok(());
     }
@@ -3859,16 +3884,60 @@ async fn ensure_gateway_matches_runtime() -> Result<(), String> {
         wait_for_gateway_port_release(&endpoint.bind_host, endpoint.port).await?;
     }
 
-    let listener = match bind_gateway_listener(bind_host, collection.port).await {
-        Ok(listener) => listener,
+    let (listener, bind_host) = match bind_gateway_listener(requested_bind_host, collection.port)
+        .await
+    {
+        Ok(listener) => (listener, requested_bind_host),
         Err(error) => {
-            let message = format_gateway_bind_error(bind_host, collection.port, &error);
-            let mut runtime = gateway_runtime().lock().await;
-            runtime.running = false;
-            runtime.actual_port = None;
-            runtime.actual_bind_host = None;
-            runtime.last_error = Some(message.clone());
-            return Err(message);
+            #[cfg(target_os = "windows")]
+            if should_fallback_lan_bind_to_localhost(requested_bind_host, &error) {
+                logger::log_codex_api_warn(&format!(
+                    "[CodexLocalAccess] Windows 拒绝绑定 {}:{}，改用 {}:{}",
+                    requested_bind_host,
+                    collection.port,
+                    CODEX_LOCAL_ACCESS_LOCALHOST_BIND_HOST,
+                    collection.port
+                ));
+                match bind_gateway_listener(CODEX_LOCAL_ACCESS_LOCALHOST_BIND_HOST, collection.port)
+                    .await
+                {
+                    Ok(listener) => (listener, CODEX_LOCAL_ACCESS_LOCALHOST_BIND_HOST),
+                    Err(localhost_error) => {
+                        let message = format_gateway_bind_error(
+                            CODEX_LOCAL_ACCESS_LOCALHOST_BIND_HOST,
+                            collection.port,
+                            &localhost_error,
+                        );
+                        let mut runtime = gateway_runtime().lock().await;
+                        runtime.running = false;
+                        runtime.actual_port = None;
+                        runtime.actual_bind_host = None;
+                        runtime.last_error = Some(message.clone());
+                        return Err(message);
+                    }
+                }
+            } else {
+                let message =
+                    format_gateway_bind_error(requested_bind_host, collection.port, &error);
+                let mut runtime = gateway_runtime().lock().await;
+                runtime.running = false;
+                runtime.actual_port = None;
+                runtime.actual_bind_host = None;
+                runtime.last_error = Some(message.clone());
+                return Err(message);
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            {
+                let message =
+                    format_gateway_bind_error(requested_bind_host, collection.port, &error);
+                let mut runtime = gateway_runtime().lock().await;
+                runtime.running = false;
+                runtime.actual_port = None;
+                runtime.actual_bind_host = None;
+                runtime.last_error = Some(message.clone());
+                return Err(message);
+            }
         }
     };
     let (shutdown_sender, mut shutdown_receiver) = watch::channel(false);
