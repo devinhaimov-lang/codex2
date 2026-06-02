@@ -403,6 +403,92 @@
   margin-top: auto;
 }
 
+.codex-local-access-model-picker {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+  padding: 3px 4px 3px 8px;
+  border: 1px solid rgba(14, 165, 233, 0.22);
+  border-radius: 999px;
+  background: rgba(240, 249, 255, 0.84);
+}
+
+.codex-local-access-model-label {
+  flex-shrink: 0;
+  color: #0369a1;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.codex-local-access-provider-select {
+  width: 82px;
+}
+
+.codex-local-access-provider-select .single-select-dropdown-trigger {
+  height: 28px;
+  min-height: 28px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 0 4px 0 2px;
+  color: #0369a1;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.codex-local-access-model-select {
+  width: min(170px, 34vw);
+}
+
+.codex-local-access-model-select .single-select-dropdown-trigger {
+  height: 28px;
+  min-height: 28px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 0 4px 0 2px;
+  color: #0f172a;
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.codex-local-access-model-start {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  min-width: 48px;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #0284c7, #0ea5e9);
+  box-shadow: 0 8px 18px rgba(14, 165, 233, 0.24);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  transition:
+    transform 0.16s ease,
+    box-shadow 0.16s ease,
+    opacity 0.16s ease;
+}
+
+.codex-local-access-model-start:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(14, 165, 233, 0.34);
+}
+
+.codex-local-access-model-start:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.codex-local-access-model-copy {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+}
+
 .codex-local-access-card-bottom .card-footer {
   padding-top: 12px;
 }
@@ -930,6 +1016,29 @@
   border-color: rgba(56, 189, 248, 0.28);
   background: rgba(14, 165, 233, 0.14);
   color: #7dd3fc;
+}
+
+[data-theme="dark"] .codex-local-access-model-picker {
+  border-color: rgba(56, 189, 248, 0.3);
+  background: rgba(8, 47, 73, 0.38);
+}
+
+[data-theme="dark"] .codex-local-access-model-label {
+  color: #bae6fd;
+}
+
+[data-theme="dark"] .codex-local-access-provider-select .single-select-dropdown-trigger {
+  color: #7dd3fc;
+}
+
+[data-theme="dark"] .codex-local-access-model-select .single-select-dropdown-trigger {
+  color: #e0f2fe;
+}
+
+[data-theme="dark"] .codex-local-access-model-start {
+  background: linear-gradient(135deg, #0ea5e9, #38bdf8);
+  box-shadow: 0 8px 18px rgba(14, 165, 233, 0.2);
+  color: #082f49;
 }
 
 [data-theme="dark"] .codex-local-access-stats-empty,

@@ -3,6 +3,7 @@ import {
   lazy,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
@@ -16,9 +17,11 @@ import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useTranslation } from 'react-i18next';
-import { FileText, FolderOpen, RefreshCw, X } from 'lucide-react';
+import { FileText, FolderOpen, Keyboard, RefreshCw, Search, X } from 'lucide-react';
 import { SideNav } from './components/layout/SideNav';
 import { GlobalModal } from './components/GlobalModal';
+import CommandPaletteModal, { type CommandPaletteItem } from './components/CommandPaletteModal';
+import KeyboardShortcutsModal from './components/KeyboardShortcutsModal';
 import type { QuickSettingsType } from './components/QuickSettingsPopover';
 import { Page } from './types/navigation';
 import { useAutoRefresh } from './hooks/useAutoRefresh';
@@ -197,6 +200,8 @@ const TASKS_STORAGE_KEY = 'agtools.wakeup.tasks';
 const WAKEUP_FORCE_DISABLE_MIGRATION_KEY = 'agtools.wakeup.migration.force_disable_0_8_14';
 const TOP_RIGHT_AD_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const EXTERNAL_IMPORT_DEDUPE_WINDOW_MS = 30 * 1000;
+const COMMAND_PALETTE_RECENT_STORAGE_KEY = 'agtools.commandPalette.recent';
+const COMMAND_PALETTE_MAX_RECENT = 8;
 
 type WakeupHistoryRecord = {
   id: string;
@@ -476,6 +481,38 @@ function isWindowsPlatform(): boolean {
   return platform.toLowerCase().includes('win');
 }
 
+function isEditableEventTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  const tagName = target.tagName.toLowerCase();
+  return (
+    target.isContentEditable
+    || tagName === 'input'
+    || tagName === 'textarea'
+    || tagName === 'select'
+  );
+}
+
+function loadRecentCommandIds(): string[] {
+  try {
+    const raw = localStorage.getItem(COMMAND_PALETTE_RECENT_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistRecentCommandIds(ids: string[]) {
+  try {
+    localStorage.setItem(COMMAND_PALETTE_RECENT_STORAGE_KEY, JSON.stringify(ids));
+  } catch {
+    // ignore persistence failures
+  }
+}
+
 function MainApp() {
   const { t } = useTranslation();
   const sideNavLayoutMode = useSideNavLayoutStore((state) => state.mode);
@@ -488,6 +525,8 @@ function MainApp() {
   const [updateNotificationKey, setUpdateNotificationKey] = useState(0);
   const [showCloseDialog, setShowCloseDialog] = useState(false);
   const [showLogViewer, setShowLogViewer] = useState(false);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
   const [showPlatformLayoutModal, setShowPlatformLayoutModal] = useState(false);
   const [platformLayoutRequestedGroupId, setPlatformLayoutRequestedGroupId] = useState<string | null>(null);
   const [showBreakout, setShowBreakout] = useState(false);
@@ -521,6 +560,7 @@ function MainApp() {
   const [updateRetryStatus, setUpdateRetryStatus] = useState('');
   const [updateDownloadError, setUpdateDownloadError] = useState('');
   const [updateErrorDetails, setUpdateErrorDetails] = useState('');
+  const [recentCommandIds, setRecentCommandIds] = useState<string[]>(() => loadRecentCommandIds());
   const pendingSilentUpdateRef = useRef<UpdaterUpdate | null>(null);
   const activeUpdateDownloadRef = useRef<UpdaterUpdate | null>(null);
   const updateCancelRequestedRef = useRef(false);
@@ -535,6 +575,20 @@ function MainApp() {
   const openPlatformLayoutModal = useCallback(() => {
     setPlatformLayoutRequestedGroupId(null);
     setShowPlatformLayoutModal(true);
+  }, []);
+  const openCommandPalette = useCallback(() => {
+    setShowKeyboardShortcuts(false);
+    setShowCommandPalette(true);
+  }, []);
+  const closeCommandPalette = useCallback(() => {
+    setShowCommandPalette(false);
+  }, []);
+  const recordRecentCommand = useCallback((commandId: string) => {
+    setRecentCommandIds((current) => {
+      const next = [commandId, ...current.filter((id) => id !== commandId)].slice(0, COMMAND_PALETTE_MAX_RECENT);
+      persistRecentCommandIds(next);
+      return next;
+    });
   }, []);
   const handleTopRightAdClick = useCallback(async () => {
     const target = topRightAdState.ad?.ctaUrl?.trim();
@@ -551,6 +605,198 @@ function MainApp() {
     setHasBreakoutSession(true);
     setShowBreakout(true);
   }, []);
+  const commandPaletteItems = useMemo<CommandPaletteItem[]>(() => [
+    {
+      id: 'action.refresh-current-page',
+      title: t('common.refresh', 'Refresh current page'),
+      subtitle: t('common.shared.shortcut.refreshDesc', 'Trigger the main refresh action for the page you are viewing'),
+      group: t('common.shared.shortcut.groupActions', 'Actions'),
+      keywords: ['refresh', 'reload', page],
+      shortcuts: ['Ctrl/Cmd+R'],
+    },
+    {
+      id: 'page.dashboard',
+      title: t('nav.dashboard', 'Dashboard'),
+      subtitle: t('common.shared.shortcut.dashboardDesc', 'Overview across all connected platforms'),
+      group: t('common.shared.shortcut.groupPages', 'Pages'),
+      keywords: ['home', 'overview', 'summary'],
+    },
+    {
+      id: 'page.overview',
+      title: t('nav.overview', 'Antigravity IDE'),
+      subtitle: t('common.shared.shortcut.overviewDesc', 'Manage Antigravity IDE accounts'),
+      group: t('common.shared.shortcut.groupPages', 'Pages'),
+      keywords: ['antigravity', 'accounts'],
+    },
+    {
+      id: 'page.codex',
+      title: t('nav.codex', 'Codex'),
+      subtitle: t('common.shared.shortcut.codexDesc', 'Open Codex accounts and instances'),
+      group: t('common.shared.shortcut.groupPages', 'Pages'),
+      keywords: ['openai', 'quota', 'session'],
+    },
+    {
+      id: 'page.github-copilot',
+      title: t('nav.githubCopilot', 'GitHub Copilot'),
+      subtitle: t('common.shared.shortcut.githubCopilotDesc', 'Open GitHub Copilot accounts'),
+      group: t('common.shared.shortcut.groupPages', 'Pages'),
+      keywords: ['copilot', 'github'],
+    },
+    {
+      id: 'page.windsurf',
+      title: 'Windsurf',
+      subtitle: t('common.shared.shortcut.windsurfDesc', 'Open Windsurf accounts'),
+      group: t('common.shared.shortcut.groupPages', 'Pages'),
+      keywords: ['windsurf'],
+    },
+    {
+      id: 'page.kiro',
+      title: 'Kiro',
+      subtitle: t('common.shared.shortcut.kiroDesc', 'Open Kiro accounts'),
+      group: t('common.shared.shortcut.groupPages', 'Pages'),
+      keywords: ['kiro'],
+    },
+    {
+      id: 'page.cursor',
+      title: 'Cursor',
+      subtitle: t('common.shared.shortcut.cursorDesc', 'Open Cursor accounts'),
+      group: t('common.shared.shortcut.groupPages', 'Pages'),
+      keywords: ['cursor'],
+    },
+    {
+      id: 'page.gemini',
+      title: t('nav.gemini', 'Gemini Cli'),
+      subtitle: t('common.shared.shortcut.geminiDesc', 'Open Gemini Cli accounts'),
+      group: t('common.shared.shortcut.groupPages', 'Pages'),
+      keywords: ['gemini', 'google'],
+    },
+    {
+      id: 'page.settings',
+      title: t('nav.settings', 'Settings'),
+      subtitle: t('common.shared.shortcut.settingsDesc', 'Open application settings'),
+      group: t('common.shared.shortcut.groupPages', 'Pages'),
+      keywords: ['preferences', 'config'],
+    },
+    {
+      id: 'page.instances',
+      title: t('nav.instances', 'Instances'),
+      subtitle: t('common.shared.shortcut.instancesDesc', 'Open multi-instance management'),
+      group: t('common.shared.shortcut.groupPages', 'Pages'),
+      keywords: ['multi instance', 'profiles'],
+    },
+    {
+      id: 'page.fingerprints',
+      title: t('nav.fingerprints', 'Fingerprints'),
+      subtitle: t('common.shared.shortcut.fingerprintsDesc', 'Manage device fingerprints'),
+      group: t('common.shared.shortcut.groupPages', 'Pages'),
+      keywords: ['device', 'risk'],
+    },
+    {
+      id: 'page.wakeup',
+      title: t('nav.wakeup', 'Wakeup Tasks'),
+      subtitle: t('common.shared.shortcut.wakeupDesc', 'Open scheduled wake-up tasks'),
+      group: t('common.shared.shortcut.groupPages', 'Pages'),
+      keywords: ['schedule', 'quota reset'],
+    },
+    {
+      id: 'page.manual',
+      title: t('nav.manual', 'Manual'),
+      subtitle: t('common.shared.shortcut.manualDesc', 'Open product documentation'),
+      group: t('common.shared.shortcut.groupPages', 'Pages'),
+      keywords: ['docs', 'guide', 'help'],
+    },
+    {
+      id: 'action.open-logs',
+      title: t('common.shared.shortcut.logsTitle', 'Open logs'),
+      subtitle: t('common.shared.shortcut.logsDesc', 'Inspect runtime and update logs'),
+      group: t('common.shared.shortcut.groupTools', 'Tools'),
+      keywords: ['log', 'debug'],
+    },
+    {
+      id: 'action.open-updates',
+      title: t('common.shared.shortcut.updatesTitle', 'Open update center'),
+      subtitle: t('common.shared.shortcut.updatesDesc', 'Inspect updates and download progress'),
+      group: t('common.shared.shortcut.groupTools', 'Tools'),
+      keywords: ['update', 'version', 'download'],
+    },
+    {
+      id: 'action.open-layout',
+      title: t('common.shared.shortcut.layoutTitle', 'Customize platform layout'),
+      subtitle: t('common.shared.shortcut.layoutDesc', 'Edit sidebar and dashboard platform order'),
+      group: t('common.shared.shortcut.groupTools', 'Tools'),
+      keywords: ['sidebar', 'layout', 'platform order'],
+    },
+    {
+      id: 'action.open-shortcuts',
+      title: t('common.shared.shortcut.shortcutsTitle', 'Show keyboard shortcuts'),
+      subtitle: t('common.shared.shortcut.shortcutsDesc', 'View available global shortcuts'),
+      group: t('common.shared.shortcut.groupTools', 'Tools'),
+      keywords: ['keyboard', 'hotkeys', 'shortcuts'],
+      shortcuts: ['?'],
+    },
+  ], [page, t]);
+  const handleCommandPaletteExecute = useCallback((item: CommandPaletteItem) => {
+    switch (item.id) {
+      case 'action.refresh-current-page':
+        triggerPageRefreshButton();
+        break;
+      case 'action.open-logs':
+        setShowLogViewer(true);
+        break;
+      case 'action.open-updates':
+        setShowUpdateNotification(true);
+        break;
+      case 'action.open-layout':
+        openPlatformLayoutModal();
+        break;
+      case 'action.open-shortcuts':
+        setShowKeyboardShortcuts(true);
+        break;
+      case 'page.dashboard':
+        setPage('dashboard');
+        break;
+      case 'page.overview':
+        setPage('overview');
+        break;
+      case 'page.codex':
+        setPage('codex');
+        break;
+      case 'page.github-copilot':
+        setPage('github-copilot');
+        break;
+      case 'page.windsurf':
+        setPage('windsurf');
+        break;
+      case 'page.kiro':
+        setPage('kiro');
+        break;
+      case 'page.cursor':
+        setPage('cursor');
+        break;
+      case 'page.gemini':
+        setPage('gemini');
+        break;
+      case 'page.settings':
+        setPage('settings');
+        break;
+      case 'page.instances':
+        setPage('instances');
+        break;
+      case 'page.fingerprints':
+        setPage('fingerprints');
+        break;
+      case 'page.wakeup':
+        setPage('wakeup');
+        break;
+      case 'page.manual':
+        setPage('manual');
+        break;
+      default:
+        break;
+    }
+    recordRecentCommand(item.id);
+    setShowCommandPalette(false);
+  }, [openPlatformLayoutModal, recordRecentCommand]);
   const ensureExternalImportVersionCompatible = useCallback(
     async (payload: ExternalProviderImportPayload): Promise<boolean> => {
       const requiredVersion = payload.minAppVersion?.trim().replace(/^v/i, '');
@@ -676,13 +922,53 @@ function MainApp() {
   useAutoRefresh();
 
   useEffect(() => {
-    const handleRefreshShortcut = (event: KeyboardEvent) => {
-      const isRefreshKey = event.key.toLowerCase() === 'r';
-      const isWindowsF5 = isWindowsPlatform() && event.key === 'F5';
+    const handleGlobalShortcut = (event: KeyboardEvent) => {
+      if (event.repeat) {
+        return;
+      }
+      const editableTarget = isEditableEventTarget(event.target);
+      const key = event.key.toLowerCase();
+      const code = event.code;
       const hasMainModifier = event.metaKey || event.ctrlKey;
+      const matchCommandPalette =
+        hasMainModifier
+        && !event.altKey
+        && (
+          ((key === 'k' || code === 'KeyK') && !event.shiftKey)
+          || ((key === 'p' || code === 'KeyP') && event.shiftKey)
+        );
+      const matchCommandPaletteFallback =
+        event.key === 'F1' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
+      if (matchCommandPalette || matchCommandPaletteFallback) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof event.stopImmediatePropagation === 'function') {
+          event.stopImmediatePropagation();
+        }
+        setShowKeyboardShortcuts(false);
+        setShowCommandPalette(true);
+        return;
+      }
+      const matchShortcutHelp =
+        !editableTarget
+        && !hasMainModifier
+        && !event.altKey
+        && ((key === '?' && !event.shiftKey) || (key === '/' && event.shiftKey) || code === 'Slash');
+      if (matchShortcutHelp) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof event.stopImmediatePropagation === 'function') {
+          event.stopImmediatePropagation();
+        }
+        setShowCommandPalette(false);
+        setShowKeyboardShortcuts(true);
+        return;
+      }
+      const isRefreshKey = key === 'r' || code === 'KeyR';
+      const isWindowsF5 = isWindowsPlatform() && event.key === 'F5';
       const matchMainRefresh = isRefreshKey && hasMainModifier && !event.altKey && !event.shiftKey;
       const matchWindowsRefresh = isWindowsF5 && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
-      if ((!matchMainRefresh && !matchWindowsRefresh) || event.repeat) {
+      if ((!matchMainRefresh && !matchWindowsRefresh) || editableTarget) {
         return;
       }
       event.preventDefault();
@@ -690,9 +976,11 @@ function MainApp() {
       triggerPageRefreshButton();
     };
 
-    window.addEventListener('keydown', handleRefreshShortcut, true);
+    document.addEventListener('keydown', handleGlobalShortcut, true);
+    window.addEventListener('keydown', handleGlobalShortcut, true);
     return () => {
-      window.removeEventListener('keydown', handleRefreshShortcut, true);
+      document.removeEventListener('keydown', handleGlobalShortcut, true);
+      window.removeEventListener('keydown', handleGlobalShortcut, true);
     };
   }, []);
 
@@ -2966,6 +3254,17 @@ function MainApp() {
         </Suspense>
       )}
       <GlobalModal />
+      <CommandPaletteModal
+        open={showCommandPalette}
+        items={commandPaletteItems}
+        recentItemIds={recentCommandIds}
+        onClose={closeCommandPalette}
+        onExecute={handleCommandPaletteExecute}
+      />
+      <KeyboardShortcutsModal
+        open={showKeyboardShortcuts}
+        onClose={() => setShowKeyboardShortcuts(false)}
+      />
 
       {/* 关闭确认对话框 */}
       {showCloseDialog && (
@@ -3137,6 +3436,26 @@ function MainApp() {
         onOpenLogViewer={() => setShowLogViewer(true)}
       />
 
+      <button
+        className="log-entry-fab global-quick-actions-fab"
+        onClick={openCommandPalette}
+        title={t('common.shared.shortcut.openQuickActions', 'Open quick actions')}
+        aria-label={t('common.shared.shortcut.openQuickActions', 'Open quick actions')}
+      >
+        <Search size={18} />
+      </button>
+
+      <button
+        className="global-quick-actions-fab-label"
+        onClick={openCommandPalette}
+        title={t('common.shared.shortcut.openQuickActions', 'Open quick actions')}
+        aria-label={t('common.shared.shortcut.openQuickActions', 'Open quick actions')}
+      >
+        <Search size={15} />
+        <strong>{t('common.shared.shortcut.quickActionsLabel', 'Quick actions')}</strong>
+        <span>{isWindowsPlatform() ? 'Ctrl+K' : 'Cmd+K'}</span>
+      </button>
+
       {sideNavLayoutMode !== 'classic' && (
         <button
           className="log-entry-fab"
@@ -3147,6 +3466,19 @@ function MainApp() {
           <FileText size={18} />
         </button>
       )}
+
+      <button
+        className="log-entry-fab"
+        style={{ bottom: sideNavLayoutMode !== 'classic' ? 128 : 24 }}
+        onClick={() => {
+          setShowCommandPalette(false);
+          setShowKeyboardShortcuts(true);
+        }}
+        title={t('common.shared.shortcut.showShortcuts', 'Show keyboard shortcuts')}
+        aria-label={t('common.shared.shortcut.showShortcuts', 'Show keyboard shortcuts')}
+      >
+        <Keyboard size={18} />
+      </button>
 
       <Suspense fallback={null}>
         <PlatformLayoutModal

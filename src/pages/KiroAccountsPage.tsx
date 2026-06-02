@@ -84,6 +84,9 @@ export function KiroAccountsPage() {
       ? readAccountsOverviewFilterStringArray(KIRO_FILTER_PERSISTENCE_SCOPE, FILTER_TYPES_FIELD)
       : [],
   );
+  const [localApiState, setLocalApiState] = useState<kiroService.KiroLocalApiState | null>(null);
+  const [localApiCopied, setLocalApiCopied] = useState(false);
+  const [localApiTesting, setLocalApiTesting] = useState(false);
   const untaggedKey = '__untagged__';
 
   const store = useKiroAccountStore();
@@ -165,6 +168,52 @@ export function KiroAccountsPage() {
     }
     writeAccountsOverviewFilterField(filterPersistenceScope, FILTER_TYPES_FIELD, filterTypes);
   }, [filterPersistenceEnabled, filterPersistenceScope, filterTypes]);
+
+  const loadLocalApiState = useCallback(async () => {
+    try {
+      setLocalApiState(await kiroService.getKiroLocalApiState());
+    } catch (error) {
+      console.warn('[KiroLocalAPI] load state failed', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadLocalApiState();
+  }, [loadLocalApiState]);
+
+  const handleCopyLocalApiBaseUrl = useCallback(async () => {
+    const baseUrl = localApiState?.base_url;
+    if (!baseUrl) return;
+    try {
+      await navigator.clipboard.writeText(baseUrl);
+      setLocalApiCopied(true);
+      window.setTimeout(() => setLocalApiCopied(false), 1600);
+    } catch (error) {
+      setMessage({
+        text: t('kiro.localApi.copyFailed', { defaultValue: '复制 API 地址失败：{{error}}', error: String(error) }),
+        tone: 'error',
+      });
+    }
+  }, [localApiState?.base_url, setMessage, t]);
+
+  const handleTestLocalApi = useCallback(async () => {
+    setLocalApiTesting(true);
+    try {
+      const result = await kiroService.testKiroLocalApi();
+      setMessage({
+        text: t('kiro.localApi.testSuccess', { defaultValue: 'Kiro 本地 API 测试成功：{{result}}', result }),
+        tone: 'success',
+      });
+      await loadLocalApiState();
+    } catch (error) {
+      setMessage({
+        text: t('kiro.localApi.testFailed', { defaultValue: 'Kiro 本地 API 测试失败：{{error}}', error: String(error) }),
+        tone: 'error',
+      });
+    } finally {
+      setLocalApiTesting(false);
+    }
+  }, [loadLocalApiState, setMessage, t]);
 
   const toggleFilterTypeValue = useCallback((value: string) => {
     setFilterTypes((prev) => {
@@ -874,6 +923,34 @@ export function KiroAccountsPage() {
           <button onClick={() => setMessage(null)}><X size={14} /></button>
         </div>
       )}
+
+      <div className="kiro-local-api-card">
+        <div className="kiro-local-api-main">
+          <div className="kiro-local-api-title">
+            <span className={`kiro-local-api-dot ${localApiState?.enabled ? 'online' : ''}`} />
+            <span>{t('kiro.localApi.title', 'Kiro 本地 API')}</span>
+          </div>
+          <div className="kiro-local-api-desc">
+            {localApiState?.base_url
+              ? t('kiro.localApi.desc', { defaultValue: 'OpenAI 兼容地址：{{url}}，模型：{{model}}', url: localApiState.base_url, model: localApiState.model })
+              : t('kiro.localApi.notReady', '本地 API 正在启动，稍后刷新状态。')}
+          </div>
+        </div>
+        <div className="kiro-local-api-actions">
+          <button className="btn btn-secondary" onClick={() => void loadLocalApiState()}>
+            <RefreshCw size={14} />
+            {t('common.refresh', '刷新')}
+          </button>
+          <button className="btn btn-secondary" onClick={() => void handleCopyLocalApiBaseUrl()} disabled={!localApiState?.base_url}>
+            {localApiCopied ? <Check size={14} /> : <Copy size={14} />}
+            {localApiCopied ? t('common.copied', '已复制') : t('common.copy', '复制')}
+          </button>
+          <button className="btn btn-primary" onClick={() => void handleTestLocalApi()} disabled={localApiTesting}>
+            <RefreshCw size={14} className={localApiTesting ? 'loading-spinner' : ''} />
+            {t('codex.localAccess.test', '测试')}
+          </button>
+        </div>
+      </div>
 
       <div className="toolbar">
         <div className="toolbar-left">

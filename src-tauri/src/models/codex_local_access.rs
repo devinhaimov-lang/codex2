@@ -172,6 +172,7 @@ pub struct CodexLocalAccessState {
     pub base_url: Option<String>,
     pub lan_base_url: Option<String>,
     pub model_ids: Vec<String>,
+    pub active_model_id: Option<String>,
     pub last_error: Option<String>,
     pub member_count: usize,
     pub stats: CodexLocalAccessStats,

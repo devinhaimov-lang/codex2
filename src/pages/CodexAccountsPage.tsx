@@ -59,6 +59,7 @@ import { useCodexInstanceStore } from "../stores/useCodexInstanceStore";
 import * as codexService from "../services/codexService";
 import * as codexInstanceService from "../services/codexInstanceService";
 import * as codexLocalAccessService from "../services/codexLocalAccessService";
+import * as kiroService from "../services/kiroService";
 import { TagEditModal } from "../components/TagEditModal";
 import {
   ExportJsonModal,
@@ -129,6 +130,7 @@ import {
 } from "../components/SingleSelectFilterDropdown";
 import { SingleSelectDropdown } from "../components/SingleSelectDropdown";
 import type { CodexAccount, CodexAppSpeed } from "../types/codex";
+import type { KiroAccount } from "../types/kiro";
 import type {
   CodexLocalAccessAddressKind,
   CodexLocalAccessCustomRoutingRule,
@@ -235,6 +237,15 @@ const CODEX_TOKEN_BATCH_EXAMPLE = `[
 const CHATGPT_SESSION_URL = "https://chatgpt.com/api/auth/session";
 const OPENAI_OFFICIAL_PRESET_ID = "openai_official";
 const COCKPIT_API_BASE_URL = "https://chongcodex.cn/v1";
+const KIRO_LOCAL_ACCESS_ACCOUNT_PREFIX = "kiro:";
+
+function makeKiroLocalAccessAccountId(accountId: string): string {
+  return `${KIRO_LOCAL_ACCESS_ACCOUNT_PREFIX}${accountId}`;
+}
+
+function isKiroLocalAccessAccountId(accountId: string): boolean {
+  return accountId.startsWith(KIRO_LOCAL_ACCESS_ACCOUNT_PREFIX);
+}
 
 function normalizeCodexApiBaseUrl(rawValue?: string | null): string {
   return normalizeHttpBaseUrl(rawValue ?? "") ?? "";
@@ -278,11 +289,30 @@ const OAUTH_BINDING_PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
 type CodexOverviewLayoutMode = "compact" | "list" | "grid";
 type OAuthBindingSortBy = "account" | "created_at" | "last_used" | "plan";
 type OAuthBindingTargetKind = "api_key_account" | "local_access";
+type LocalAccessModelProvider = "codex" | "kiro";
 
 function normalizeLocalAccessAddressKind(
   value: string | null | undefined,
 ): CodexLocalAccessAddressKind {
   return value === "lan" ? "lan" : "local";
+}
+
+function resolveLocalAccessModelProvider(
+  modelId: string,
+): LocalAccessModelProvider {
+  const normalized = modelId.trim().toLowerCase();
+  if (
+    normalized === "kiro-local" ||
+    normalized === "auto" ||
+    normalized.startsWith("claude-") ||
+    normalized.startsWith("deepseek-") ||
+    normalized.startsWith("minimax-") ||
+    normalized.startsWith("glm-") ||
+    normalized.startsWith("qwen")
+  ) {
+    return "kiro";
+  }
+  return "codex";
 }
 
 function readStoredLocalAccessAddressKind(): CodexLocalAccessAddressKind {
@@ -575,8 +605,11 @@ export function CodexAccountsPage() {
   const [localAccessSaving, setLocalAccessSaving] = useState(false);
   const [localAccessTesting, setLocalAccessTesting] = useState(false);
   const [localAccessStarting, setLocalAccessStarting] = useState(false);
+  const [localAccessModelApplying, setLocalAccessModelApplying] =
+    useState(false);
   const [localAccessRefreshing, setLocalAccessRefreshing] = useState(false);
   const [localAccessPortKilling, setLocalAccessPortKilling] = useState(false);
+  const [kiroAccountsForLocalAccess, setKiroAccountsForLocalAccess] = useState<KiroAccount[]>([]);
   const [showLocalAccessHideConfirm, setShowLocalAccessHideConfirm] =
     useState(false);
   const [localAccessHideSubmitting, setLocalAccessHideSubmitting] =
@@ -597,8 +630,12 @@ export function CodexAccountsPage() {
     set: setApiSwitchNoticeError,
   } = useModalErrorState();
   const [localAccessCopiedField, setLocalAccessCopiedField] = useState<
-    "baseUrl" | "apiKey" | null
+    "baseUrl" | "apiKey" | "modelId" | null
   >(null);
+  const [selectedLocalAccessProvider, setSelectedLocalAccessProvider] =
+    useState<LocalAccessModelProvider>("codex");
+  const [selectedLocalAccessModelId, setSelectedLocalAccessModelId] =
+    useState("");
   const [localAccessKeyVisible, setLocalAccessKeyVisible] = useState(false);
   const [localAccessAddressKind, setLocalAccessAddressKind] =
     useState<CodexLocalAccessAddressKind>(() =>
@@ -4196,6 +4233,73 @@ export function CodexAccountsPage() {
         .filter((account): account is CodexAccount => Boolean(account)),
     [accounts, localAccessCollection?.accountIds],
   );
+  const kiroLocalAccessAccountById = useMemo(
+    () =>
+      new Map(
+        kiroAccountsForLocalAccess.map((account) => [
+          makeKiroLocalAccessAccountId(account.id),
+          account,
+        ]),
+      ),
+    [kiroAccountsForLocalAccess],
+  );
+  const localAccessMemberItems = useMemo(
+    () =>
+      (localAccessCollection?.accountIds ?? [])
+        .map((accountId) => {
+          const codexAccount = accounts.find((account) => account.id === accountId);
+          if (codexAccount) {
+            const presentation = resolvePresentation(codexAccount);
+            return {
+              id: accountId,
+              displayName: presentation.displayName,
+              planLabel: presentation.planLabel,
+              planClass: presentation.planClass,
+              hourlyValueText:
+                presentation.quotaItems.find((item) => item.key === "primary")
+                  ?.valueText || "-",
+              hourlyClass:
+                presentation.quotaItems.find((item) => item.key === "primary")
+                  ?.quotaClass || "unknown",
+              hourlyTitle:
+                presentation.quotaItems.find((item) => item.key === "primary")
+                  ?.hintText ||
+                presentation.quotaItems.find((item) => item.key === "primary")
+                  ?.label,
+              weeklyValueText:
+                presentation.quotaItems.find((item) => item.key === "secondary")
+                  ?.valueText || "-",
+              weeklyClass:
+                presentation.quotaItems.find((item) => item.key === "secondary")
+                  ?.quotaClass || "unknown",
+              weeklyTitle:
+                presentation.quotaItems.find((item) => item.key === "secondary")
+                  ?.label,
+            };
+          }
+          const kiroAccount = kiroLocalAccessAccountById.get(accountId);
+          if (!kiroAccount) return null;
+          return {
+            id: accountId,
+            displayName: kiroAccount.email || kiroAccount.id,
+            planLabel: kiroAccount.plan_name || kiroAccount.plan_tier || "Kiro",
+            planClass: "team",
+            hourlyValueText: "-",
+            hourlyClass: "unknown",
+            hourlyTitle: "Kiro",
+            weeklyValueText: "-",
+            weeklyClass: "unknown",
+            weeklyTitle: "Kiro",
+          };
+        })
+        .filter((item): item is NonNullable<typeof item> => Boolean(item)),
+    [
+      accounts,
+      kiroLocalAccessAccountById,
+      localAccessCollection?.accountIds,
+      resolvePresentation,
+    ],
+  );
   const localAccessQuotaPoolSummary = useMemo(
     () => summarizeCodexQuotaPool(localAccessAccounts),
     [localAccessAccounts],
@@ -4227,6 +4331,7 @@ export function CodexAccountsPage() {
     localAccessSaving ||
     localAccessTesting ||
     localAccessStarting ||
+    localAccessModelApplying ||
     localAccessRefreshing ||
     localAccessPortKilling;
   const selectedLocalAccessAddressKind: CodexLocalAccessAddressKind =
@@ -4250,6 +4355,56 @@ export function CodexAccountsPage() {
     ],
     [localAccessState?.lanBaseUrl, t],
   );
+  const localAccessModelOptions = useMemo(
+    () =>
+      (localAccessState?.modelIds ?? [])
+        .filter(
+          (modelId) =>
+            resolveLocalAccessModelProvider(modelId) ===
+            selectedLocalAccessProvider,
+        )
+        .map((modelId) => ({
+          value: modelId,
+          label: modelId,
+        })),
+    [localAccessState?.modelIds, selectedLocalAccessProvider],
+  );
+  const localAccessProviderOptions = useMemo(
+    () => [
+      {
+        value: "codex",
+        label: t("codex.localAccess.providerCodex", "Codex"),
+      },
+      {
+        value: "kiro",
+        label: t("codex.localAccess.providerKiro", "Kiro"),
+      },
+    ],
+    [t],
+  );
+  useEffect(() => {
+    const activeModelId = localAccessState?.activeModelId?.trim();
+    if (!activeModelId) return;
+    setSelectedLocalAccessProvider(resolveLocalAccessModelProvider(activeModelId));
+    setSelectedLocalAccessModelId(activeModelId);
+  }, [localAccessState?.activeModelId]);
+
+  useEffect(() => {
+    const modelIds = localAccessModelOptions.map((option) => option.value);
+    if (modelIds.length === 0) {
+      setSelectedLocalAccessModelId("");
+      return;
+    }
+    const activeModelId = localAccessState?.activeModelId?.trim();
+    const preferredModelId = activeModelId && modelIds.includes(activeModelId)
+      ? activeModelId
+      : selectedLocalAccessProvider === "kiro" && modelIds.includes("claude-opus-4.8")
+        ? "claude-opus-4.8"
+        : modelIds[0];
+    setSelectedLocalAccessModelId((current) =>
+      modelIds.includes(current) ? current : preferredModelId,
+    );
+  }, [localAccessModelOptions, localAccessState?.activeModelId, selectedLocalAccessProvider]);
   const handleLocalAccessAddressKindChange = useCallback((value: string) => {
     const next = normalizeLocalAccessAddressKind(value);
     setLocalAccessAddressKind(next);
@@ -4277,7 +4432,7 @@ export function CodexAccountsPage() {
   ]);
 
   const handleCopyLocalAccessValue = useCallback(
-    async (field: "baseUrl" | "apiKey", value: string) => {
+    async (field: "baseUrl" | "apiKey" | "modelId", value: string) => {
       try {
         await navigator.clipboard.writeText(value);
         setLocalAccessCopiedField(field);
@@ -4297,15 +4452,34 @@ export function CodexAccountsPage() {
     [setMessage, t],
   );
 
-  const openLocalAccessPanel = useCallback(() => {
-    setLocalAccessModalMode("panel");
-    setShowLocalAccessModal(true);
+  const refreshKiroAccountsForLocalAccess = useCallback(async () => {
+    try {
+      const nextAccounts = await kiroService.listKiroAccounts();
+      setKiroAccountsForLocalAccess(nextAccounts);
+      return nextAccounts;
+    } catch (error) {
+      console.error("Failed to load Kiro accounts for API service:", error);
+      return [];
+    }
   }, []);
 
-  const openLocalAccessMemberPicker = useCallback(() => {
+  const openLocalAccessPanel = useCallback(async () => {
+    await Promise.allSettled([
+      refreshKiroAccountsForLocalAccess(),
+      reloadLocalAccessState(),
+    ]);
+    setLocalAccessModalMode("panel");
+    setShowLocalAccessModal(true);
+  }, [refreshKiroAccountsForLocalAccess, reloadLocalAccessState]);
+
+  const openLocalAccessMemberPicker = useCallback(async () => {
+    await Promise.allSettled([
+      refreshKiroAccountsForLocalAccess(),
+      reloadLocalAccessState(),
+    ]);
     setLocalAccessModalMode("members");
     setShowLocalAccessModal(true);
-  }, []);
+  }, [refreshKiroAccountsForLocalAccess, reloadLocalAccessState]);
 
   const handleHideLocalAccessEntry = useCallback(() => {
     setShowLocalAccessHideConfirm(true);
@@ -4348,6 +4522,10 @@ export function CodexAccountsPage() {
     void reloadLocalAccessState();
   }, [accounts, reloadLocalAccessState]);
 
+  useEffect(() => {
+    void refreshKiroAccountsForLocalAccess();
+  }, [refreshKiroAccountsForLocalAccess]);
+
   const localAccessModalSelectedIds = useMemo(
     () => [...(localAccessCollection?.accountIds ?? [])],
     [localAccessCollection?.accountIds],
@@ -4364,7 +4542,14 @@ export function CodexAccountsPage() {
         const accountById = new Map(
           accounts.map((account) => [account.id, account]),
         );
+        const kiroAccountIds = new Set(
+          kiroAccountsForLocalAccess.map((account) =>
+            makeKiroLocalAccessAccountId(account.id),
+          ),
+        );
         const filteredAccountIds = accountIds.filter((accountId) => {
+          if (isKiroLocalAccessAccountId(accountId)) return true;
+          if (kiroAccountIds.has(accountId)) return true;
           const account = accountById.get(accountId);
           if (!account) return false;
           if (isCodexApiKeyAccount(account)) return false;
@@ -4381,6 +4566,7 @@ export function CodexAccountsPage() {
             filteredAccountIds,
             restrictFreeAccounts,
           );
+        await refreshKiroAccountsForLocalAccess();
         setLocalAccessState(nextState);
         setMessage({
           text: t("codex.localAccess.saveSuccess", "API 服务集合已更新"),
@@ -4393,7 +4579,7 @@ export function CodexAccountsPage() {
         setLocalAccessSaving(false);
       }
     },
-    [accounts, setMessage, t],
+    [accounts, kiroAccountsForLocalAccess, refreshKiroAccountsForLocalAccess, setMessage, t],
   );
 
   const handleRemoveLocalAccessAccount = useCallback(
@@ -5142,6 +5328,77 @@ export function CodexAccountsPage() {
     resolveCurrentCodexLaunchCredentialKind,
     setMessage,
     shouldShowApiSwitchVisibilityNotice,
+    t,
+  ]);
+
+  const handleApplyLocalAccessModel = useCallback(async () => {
+    const modelId = selectedLocalAccessModelId.trim();
+    if (!modelId) {
+      setMessage({
+        text: t("codex.localAccess.modelRequired", "请先选择模型"),
+        tone: "error",
+      });
+      return;
+    }
+    if (!localAccessCollection) {
+      setMessage({
+        text: t("codex.localAccess.testUnavailable", "当前 API 服务地址不可用"),
+        tone: "error",
+      });
+      return;
+    }
+    if (!localAccessCollection.enabled) {
+      const confirmedEnableAndSwitch = await confirmDialog(
+        t(
+          "codex.localAccess.enableBeforeActivateMessage",
+          "API 服务当前未启用，需要先启用服务。是否启用并切号？",
+        ),
+        {
+          title: t("codex.localAccess.enableBeforeActivateTitle", "服务未启用"),
+          kind: "warning",
+          okLabel: t(
+            "codex.localAccess.enableAndActivateAction",
+            "启用并切号",
+          ),
+          cancelLabel: t("common.cancel", "取消"),
+        },
+      );
+      if (!confirmedEnableAndSwitch) return;
+    }
+    const confirmed = await requestLocalAccessRiskNotice("service");
+    if (!confirmed) return;
+
+    setLocalAccessModelApplying(true);
+    setMessage(null);
+    try {
+      const nextState =
+        await codexLocalAccessService.activateCodexLocalAccessModel(modelId);
+      setLocalAccessState(nextState);
+      await fetchCurrentAccount();
+      setLocalAccessLaunchCurrent(true);
+      setMessage({
+        text: t(
+          "codex.localAccess.modelApplySuccess",
+          "已切换 Codex CLI 模型：{{model}}",
+        ).replace("{{model}}", modelId),
+      });
+    } catch (error) {
+      setMessage({
+        text: t("messages.actionFailed", {
+          action: t("codex.localAccess.applyModelAction", "启动模型"),
+          error: String(error).replace(/^Error:\s*/, ""),
+        }),
+        tone: "error",
+      });
+    } finally {
+      setLocalAccessModelApplying(false);
+    }
+  }, [
+    fetchCurrentAccount,
+    localAccessCollection,
+    requestLocalAccessRiskNotice,
+    selectedLocalAccessModelId,
+    setMessage,
     t,
   ]);
 
@@ -6104,7 +6361,7 @@ export function CodexAccountsPage() {
       : localAccessKeyVisible
         ? localAccessCollection.apiKey
         : `${localAccessCollection.apiKey.slice(0, 10)}••••••••••••`;
-    const previewAccounts = localAccessAccounts.slice(0, 2);
+    const previewAccounts = localAccessMemberItems.slice(0, 2);
     const localAccessOAuthBindingLabel = t(
       "codex.api.oauthBinding.label",
       "OAuth 绑定",
@@ -6119,7 +6376,7 @@ export function CodexAccountsPage() {
     const localAccessOAuthBindingLine = `${localAccessOAuthBindingLabel}：${localAccessOAuthBindingValue}`;
     const hiddenCount = Math.max(
       0,
-      localAccessAccounts.length - previewAccounts.length,
+      localAccessMemberItems.length - previewAccounts.length,
     );
     const showLocalAccessEmptyState = previewAccounts.length === 0;
     const localAccessStatusTone = !localAccessCollection
@@ -6382,13 +6639,6 @@ export function CodexAccountsPage() {
               ) : (
                 <>
                   {previewAccounts.map((account) => {
-                    const presentation = resolvePresentation(account);
-                    const hourlyQuota = presentation.quotaItems.find(
-                      (item) => item.key === "primary",
-                    );
-                    const weeklyQuota = presentation.quotaItems.find(
-                      (item) => item.key === "secondary",
-                    );
                     return (
                       <div
                         key={`local-access-${account.id}`}
@@ -6396,26 +6646,26 @@ export function CodexAccountsPage() {
                       >
                         <span
                           className="folder-preview-email codex-local-access-member-email"
-                          title={maskAccountText(presentation.displayName)}
+                          title={maskAccountText(account.displayName)}
                         >
-                          {maskAccountText(presentation.displayName)}
+                          {maskAccountText(account.displayName)}
                         </span>
                         <span
-                          className={`codex-local-access-member-text codex-local-access-member-quota ${hourlyQuota?.quotaClass || "unknown"}`}
-                          title={hourlyQuota?.hintText || hourlyQuota?.label}
+                          className={`codex-local-access-member-text codex-local-access-member-quota ${account.hourlyClass}`}
+                          title={account.hourlyTitle}
                         >
-                          {hourlyQuota?.valueText || "-"}
+                          {account.hourlyValueText}
                         </span>
                         <span
-                          className={`codex-local-access-member-text codex-local-access-member-quota ${weeklyQuota?.quotaClass || "unknown"}`}
-                          title={weeklyQuota?.label}
+                          className={`codex-local-access-member-text codex-local-access-member-quota ${account.weeklyClass}`}
+                          title={account.weeklyTitle}
                         >
-                          {weeklyQuota?.valueText || "-"}
+                          {account.weeklyValueText}
                         </span>
                         <span
-                          className={`codex-local-access-member-plan tier-badge ${presentation.planClass || "unknown"}`}
+                          className={`codex-local-access-member-plan tier-badge ${account.planClass || "unknown"}`}
                         >
-                          {presentation.planLabel}
+                          {account.planLabel}
                         </span>
                         <button
                           type="button"
@@ -6424,7 +6674,7 @@ export function CodexAccountsPage() {
                             void handleRemoveLocalAccessAccount(account.id)
                           }
                           title={t("accounts.groups.removeFromGroup")}
-                          aria-label={`${t("accounts.groups.removeFromGroup")}: ${maskAccountText(presentation.displayName)}`}
+                          aria-label={`${t("accounts.groups.removeFromGroup")}: ${maskAccountText(account.displayName)}`}
                           disabled={localAccessBusy}
                         >
                           <LogOut size={12} />
@@ -6528,6 +6778,84 @@ export function CodexAccountsPage() {
                 preferredPlacement="top"
                 ariaLabel={t("codex.speed.title", "速度")}
               />
+              {localAccessModelOptions.length > 0 && (
+                <div className="codex-local-access-model-picker">
+                  <span className="codex-local-access-model-label">
+                    {t("codex.localAccess.modelId", "模型")}
+                  </span>
+                  <SingleSelectDropdown
+                    value={selectedLocalAccessProvider}
+                    options={localAccessProviderOptions}
+                    onChange={(value) =>
+                      setSelectedLocalAccessProvider(
+                        value === "kiro" ? "kiro" : "codex",
+                      )
+                    }
+                    className="codex-local-access-provider-select"
+                    menuClassName="codex-local-access-provider-menu"
+                    menuPlacement="up"
+                    menuWidth={120}
+                    menuMaxHeight={140}
+                    disabled={localAccessBusy}
+                    ariaLabel={t("codex.localAccess.provider", "来源")}
+                  />
+                  <SingleSelectDropdown
+                    value={selectedLocalAccessModelId}
+                    options={localAccessModelOptions}
+                    onChange={setSelectedLocalAccessModelId}
+                    className="codex-local-access-model-select"
+                    menuClassName="codex-local-access-model-menu"
+                    menuPlacement="up"
+                    menuWidth={220}
+                    menuMaxHeight={260}
+                    disabled={localAccessBusy}
+                    ariaLabel={t("codex.localAccess.modelId", "模型")}
+                    placeholder={t(
+                      "codex.localAccess.modelIdPlaceholder",
+                      "选择模型",
+                    )}
+                  />
+                  <button
+                    type="button"
+                    className="codex-local-access-model-start"
+                    onClick={() => void handleApplyLocalAccessModel()}
+                    disabled={
+                      localAccessBusy ||
+                      !localAccessCollection ||
+                      !selectedLocalAccessModelId
+                    }
+                    title={t(
+                      "codex.localAccess.applyModelAction",
+                      "启动模型",
+                    )}
+                  >
+                    {localAccessModelApplying ? (
+                      <RefreshCw size={13} className="loading-spinner" />
+                    ) : (
+                      t("common.start", "启动")
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    className="card-action-btn codex-local-access-model-copy"
+                    onClick={() =>
+                      void handleCopyLocalAccessValue(
+                        "modelId",
+                        selectedLocalAccessModelId,
+                      )
+                    }
+                    title={t("common.copy", "复制")}
+                    aria-label={t("common.copy", "复制")}
+                    disabled={!selectedLocalAccessModelId}
+                  >
+                    {localAccessCopiedField === "modelId" ? (
+                      <Check size={14} />
+                    ) : (
+                      <Copy size={14} />
+                    )}
+                  </button>
+                </div>
+              )}
               <div className="card-footer codex-local-access-footer">
                 <div className="card-actions">
                   <button
@@ -10611,6 +10939,7 @@ export function CodexAccountsPage() {
             addressOptions={localAccessAddressOptions}
             onAddressKindChange={handleLocalAccessAddressKindChange}
             accounts={accounts}
+            kiroAccounts={kiroAccountsForLocalAccess}
             accountGroups={codexGroups}
             initialSelectedIds={localAccessModalSelectedIds}
             maskAccountText={maskAccountText}

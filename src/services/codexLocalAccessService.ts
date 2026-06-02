@@ -96,6 +96,12 @@ export async function activateCodexLocalAccess(): Promise<CodexLocalAccessState>
   return await invoke('codex_local_access_activate');
 }
 
+export async function activateCodexLocalAccessModel(
+  modelId: string,
+): Promise<CodexLocalAccessState> {
+  return await invoke('codex_local_access_activate_model', { modelId });
+}
+
 export async function testCodexLocalAccess(): Promise<CodexLocalAccessTestResult> {
   return await invoke('codex_local_access_test');
 }

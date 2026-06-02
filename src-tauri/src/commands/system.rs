@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::Manager;
@@ -1320,6 +1321,34 @@ pub async fn save_text_file(path: String, content: String) -> Result<(), String>
     std::fs::write(&path, content).map_err(|e| format!("写入文件失败: {}", e))
 }
 
+/// 保存 base64 编码的二进制文件
+#[tauri::command]
+pub async fn save_binary_file(path: String, base64_content: String) -> Result<(), String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64_content.trim())
+        .map_err(|e| format!("解码文件内容失败: {}", e))?;
+    std::fs::write(&path, bytes).map_err(|e| format!("写入文件失败: {}", e))
+}
+
+fn codex_lite_chat_store_path() -> Result<PathBuf, String> {
+    Ok(modules::account::get_data_dir()?.join("codex_lite_chat.json"))
+}
+
+#[tauri::command]
+pub async fn save_codex_lite_chat(content: String) -> Result<(), String> {
+    let path = codex_lite_chat_store_path()?;
+    modules::atomic_write::write_string_atomic(&path, &content)
+}
+
+#[tauri::command]
+pub async fn load_codex_lite_chat() -> Result<String, String> {
+    let path = codex_lite_chat_store_path()?;
+    if !path.exists() {
+        return Ok(String::new());
+    }
+    std::fs::read_to_string(&path).map_err(|e| format!("读取聊天记录失败: {}", e))
+}
+
 /// 获取下载目录
 #[tauri::command]
 pub fn get_downloads_dir() -> Result<String, String> {
@@ -1895,6 +1924,104 @@ fn is_command_available(cmd: &str) -> bool {
     }
 
     command.status().map(|s| s.success()).unwrap_or(false)
+}
+
+#[cfg(target_os = "macos")]
+fn escape_applescript(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+}
+
+/// 一键安装 CLI 工具：打开终端并执行官方安装命令
+/// tool: "codex" | "claude" | "kiro"
+#[tauri::command]
+pub async fn install_cli_tool(tool: String) -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    let command = match tool.as_str() {
+        "codex" => "npm install -g @openai/codex",
+        "claude" => "npm install -g @anthropic-ai/claude-code",
+        "kiro" => "irm 'https://cli.kiro.dev/install.ps1' | iex",
+        other => return Err(format!("未知的安装工具: {}", other)),
+    }
+    .to_string();
+    #[cfg(not(target_os = "windows"))]
+    let command = match tool.as_str() {
+        "codex" => "npm install -g @openai/codex",
+        "claude" => "npm install -g @anthropic-ai/claude-code",
+        "kiro" => "curl -fsSL https://cli.kiro.dev/install | bash",
+        other => return Err(format!("未知的安装工具: {}", other)),
+    }
+    .to_string();
+
+    let _terminal = config::get_user_config()
+        .default_terminal
+        .trim()
+        .to_string();
+
+    #[cfg(target_os = "macos")]
+    {
+        let script = if _terminal.to_lowercase().contains("iterm") {
+            format!(
+                "tell application \"iTerm\"\nactivate\ncreate window with default profile\ntell current session of current window\nwrite text \"{}\"\nend tell\nend tell",
+                escape_applescript(&command)
+            )
+        } else {
+            format!(
+                "tell application \"Terminal\"\nactivate\ndo script \"{}\"\nend tell",
+                escape_applescript(&command)
+            )
+        };
+        let output = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .output()
+            .map_err(|e| format!("打开终端失败: {}", e))?;
+        if !output.status.success() {
+            return Err(format!(
+                "终端执行失败: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        return Ok(format!("已在终端开始安装 {}", tool));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("powershell")
+            .args(["-NoExit", "-Command", &command])
+            .spawn()
+            .map_err(|e| format!("打开终端失败: {}", e))?;
+        return Ok(format!("已在终端开始安装 {}", tool));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let shell_command = format!("{}; exec bash", command);
+        let mut cmd = if _terminal.is_empty() || _terminal == "system" {
+            std::process::Command::new("x-terminal-emulator")
+        } else {
+            std::process::Command::new(&_terminal)
+        };
+        cmd.args(["-e", "bash", "-lc", &shell_command])
+            .spawn()
+            .or_else(|_| {
+                std::process::Command::new("gnome-terminal")
+                    .args(["--", "bash", "-lc", &shell_command])
+                    .spawn()
+            })
+            .or_else(|_| {
+                std::process::Command::new("konsole")
+                    .args(["-e", "bash", "-lc", &shell_command])
+                    .spawn()
+            })
+            .map_err(|e| format!("打开终端失败: {}", e))?;
+        return Ok(format!("已在终端开始安装 {}", tool));
+    }
+
+    #[allow(unreachable_code)]
+    Err("不支持的操作系统".to_string())
 }
 
 /// 获取通用设置配置
@@ -2841,4 +2968,67 @@ pub async fn delete_corrupted_file(path: String) -> Result<(), String> {
     ));
 
     Ok(())
+}
+
+fn codex_cli_state_path() -> Result<PathBuf, String> {
+    let home = dirs::home_dir().ok_or("无法获取用户主目录")?;
+    Ok(home.join(".codex").join("active-provider"))
+}
+
+fn codex_kiro_profile_path() -> Result<PathBuf, String> {
+    let home = dirs::home_dir().ok_or("无法获取用户主目录")?;
+    Ok(home.join(".codex").join("kiro.config.toml"))
+}
+
+fn normalize_codex_cli_provider(provider: &str) -> &'static str {
+    if provider.trim().eq_ignore_ascii_case("kiro") {
+        "kiro"
+    } else {
+        "codex"
+    }
+}
+
+fn ensure_codex_kiro_profile() -> Result<(), String> {
+    let path = codex_kiro_profile_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| format!("创建 Codex 配置目录失败: {}", err))?;
+    }
+
+    let content = r#"model = "claude-opus-4.8"
+model_provider = "kiro_local_access"
+
+[model_providers.kiro_local_access]
+name = "Kiro Local"
+base_url = "http://127.0.0.1:3520/v1"
+env_key = "KIRO_LOCAL_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+supports_websockets = false
+"#;
+
+    fs::write(&path, content).map_err(|err| format!("写入 Kiro profile 失败: {}", err))
+}
+
+/// 获取 Codex CLI 当前默认来源（Codex / Kiro）
+#[tauri::command]
+pub fn get_codex_cli_provider() -> Result<String, String> {
+    let path = codex_cli_state_path()?;
+    let raw = fs::read_to_string(&path).unwrap_or_else(|_| "codex".to_string());
+    Ok(normalize_codex_cli_provider(&raw).to_string())
+}
+
+/// 设置 Codex CLI 当前默认来源（Codex / Kiro）
+#[tauri::command]
+pub fn set_codex_cli_provider(provider: String) -> Result<String, String> {
+    let normalized = normalize_codex_cli_provider(&provider);
+    let path = codex_cli_state_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| format!("创建 Codex 配置目录失败: {}", err))?;
+    }
+    if normalized == "kiro" {
+        ensure_codex_kiro_profile()?;
+    }
+    fs::write(&path, format!("{}\n", normalized))
+        .map_err(|err| format!("写入 Codex CLI 来源失败: {}", err))?;
+    Ok(normalized.to_string())
 }

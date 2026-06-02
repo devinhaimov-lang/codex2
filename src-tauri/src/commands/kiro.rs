@@ -245,3 +245,13 @@ pub async fn inject_kiro_to_vscode(app: AppHandle, account_id: String) -> Result
         Ok(format!("切换完成: {}", account.email))
     }
 }
+
+#[tauri::command]
+pub fn kiro_local_api_get_state() -> crate::modules::kiro_local_api::KiroLocalApiState {
+    crate::modules::kiro_local_api::get_state()
+}
+
+#[tauri::command]
+pub async fn kiro_local_api_test() -> Result<String, String> {
+    crate::modules::kiro_local_api::test_api().await
+}

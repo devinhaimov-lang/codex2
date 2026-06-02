@@ -7,7 +7,10 @@ use crate::models::codex_local_access::{
     CodexLocalAccessUsageStats,
 };
 use crate::modules::atomic_write::write_string_atomic;
-use crate::modules::{codex_account, codex_oauth, codex_protocol, codex_wakeup, logger, process};
+use crate::modules::{
+    codex_account, codex_oauth, codex_protocol, codex_wakeup, kiro_account, kiro_local_api, logger,
+    process,
+};
 use base64::{engine::general_purpose, Engine as _};
 use futures_util::StreamExt;
 use rand::{distributions::Alphanumeric, Rng};
@@ -75,6 +78,8 @@ const DEFAULT_CODEX_MODELS: &[&str] = &[
     "gpt-5.1-codex-mini",
 ];
 const CODEX_IMAGE_MODEL_ID: &str = "gpt-image-2";
+const KIRO_LOCAL_ACCESS_ACCOUNT_PREFIX: &str = "kiro:";
+const KIRO_LOCAL_API_BASE_URL: &str = "http://127.0.0.1:3520";
 const DEFAULT_IMAGES_MAIN_MODEL: &str = "gpt-5.4-mini";
 const CHAT_COMPLETIONS_PATH: &str = "/v1/chat/completions";
 const RESPONSES_PATH: &str = "/v1/responses";
@@ -571,6 +576,24 @@ fn normalize_model_key(model: &str) -> String {
     model.trim().to_ascii_lowercase()
 }
 
+fn is_kiro_local_access_account_id(account_id: &str) -> bool {
+    account_id.starts_with(KIRO_LOCAL_ACCESS_ACCOUNT_PREFIX)
+}
+
+fn strip_kiro_local_access_account_id(account_id: &str) -> Option<&str> {
+    account_id.strip_prefix(KIRO_LOCAL_ACCESS_ACCOUNT_PREFIX)
+}
+
+fn request_targets_kiro_model(request: &ParsedRequest) -> bool {
+    kiro_local_api::is_supported_model_id(&build_request_routing_hint(request).model_key)
+}
+
+fn is_valid_kiro_local_access_account_id(account_id: &str) -> bool {
+    strip_kiro_local_access_account_id(account_id)
+        .map(|raw_id| kiro_account::load_account(raw_id).is_some())
+        .unwrap_or(false)
+}
+
 fn has_date_snapshot_suffix(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.len() == 11
@@ -612,6 +635,12 @@ fn supported_codex_model_ids() -> Vec<String> {
         .collect();
     if seen_model_ids.insert(CODEX_IMAGE_MODEL_ID.to_string()) {
         model_ids.push(CODEX_IMAGE_MODEL_ID.to_string());
+    }
+    for kiro_model_id in kiro_local_api::supported_model_ids() {
+        let normalized = kiro_model_id.trim().to_ascii_lowercase();
+        if !normalized.is_empty() && seen_model_ids.insert(normalized) {
+            model_ids.push(kiro_model_id);
+        }
     }
 
     model_ids
@@ -3676,7 +3705,9 @@ fn sanitize_collection(
     let mut deduped = Vec::new();
     let mut seen = HashSet::new();
     for account_id in &collection.account_ids {
-        if !valid_account_ids.contains(account_id) {
+        if !valid_account_ids.contains(account_id)
+            && !is_valid_kiro_local_access_account_id(account_id)
+        {
             changed = true;
             continue;
         }
@@ -4067,6 +4098,8 @@ fn build_state_snapshot(runtime: &GatewayRuntime) -> CodexLocalAccessState {
         }
     });
     let model_ids = supported_codex_model_ids();
+    let active_model_id =
+        codex_account::read_current_model_from_config_toml(&codex_account::get_codex_home());
     let mut stats = runtime.stats.clone();
     stats.events.clear();
 
@@ -4077,6 +4110,7 @@ fn build_state_snapshot(runtime: &GatewayRuntime) -> CodexLocalAccessState {
         base_url,
         lan_base_url,
         model_ids,
+        active_model_id,
         last_error: runtime.last_error.clone(),
         member_count,
         stats,
@@ -4611,16 +4645,28 @@ pub async fn save_local_access_accounts(
         .map(|account| account.id)
         .collect();
 
+    logger::log_codex_api_info(&format!(
+        "[CodexLocalAccess] 保存账号集合: received={:?}, restrict_free_accounts={}",
+        account_ids, restrict_free_accounts
+    ));
+
     let mut next_account_ids = Vec::new();
     let mut seen = HashSet::new();
     for account_id in account_ids {
-        if !valid_account_ids.contains(&account_id) {
+        if !valid_account_ids.contains(&account_id)
+            && !is_valid_kiro_local_access_account_id(&account_id)
+        {
             continue;
         }
         if seen.insert(account_id.clone()) {
             next_account_ids.push(account_id);
         }
     }
+
+    logger::log_codex_api_info(&format!(
+        "[CodexLocalAccess] 保存账号集合: accepted={:?}",
+        next_account_ids
+    ));
 
     collection.restrict_free_accounts = restrict_free_accounts;
     collection.account_ids = next_account_ids;
@@ -6625,6 +6671,58 @@ async fn send_upstream_request(
     Err("请求 Codex 上游失败: 未知错误".to_string())
 }
 
+fn rewrite_request_body_model(body: &[u8], model: &str) -> Vec<u8> {
+    let Ok(mut value) = serde_json::from_slice::<Value>(body) else {
+        return body.to_vec();
+    };
+    if let Some(object) = value.as_object_mut() {
+        object.insert("model".to_string(), Value::String(model.to_string()));
+    }
+    serde_json::to_vec(&value).unwrap_or_else(|_| body.to_vec())
+}
+
+async fn send_kiro_local_request(
+    method: &str,
+    target: &str,
+    headers: &HashMap<String, String>,
+    body: &[u8],
+    model: &str,
+) -> Result<reqwest::Response, String> {
+    let client = Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|err| format!("创建 Kiro 本地 API 客户端失败: {}", err))?;
+    let path = proxy_target_path(target);
+    let url = format!("{}{}", KIRO_LOCAL_API_BASE_URL, path);
+    let method = Method::from_bytes(method.as_bytes())
+        .map_err(|err| format!("Kiro 本地 API 请求方法无效: {}", err))?;
+    let mut request = client.request(method, url);
+    for (name, value) in headers {
+        let lower = name.to_ascii_lowercase();
+        if matches!(
+            lower.as_str(),
+            "host" | "content-length" | "connection" | "authorization" | "x-api-key"
+        ) {
+            continue;
+        }
+        let Ok(header_name) = HeaderName::from_bytes(name.as_bytes()) else {
+            continue;
+        };
+        let Ok(header_value) = HeaderValue::from_str(value) else {
+            continue;
+        };
+        request = request.header(header_name, header_value);
+    }
+    request = request.header(CONTENT_TYPE, "application/json");
+    request = request.header(AUTHORIZATION, "Bearer kiro-local");
+    request
+        .body(rewrite_request_body_model(body, model))
+        .send()
+        .await
+        .map_err(|err| format!("请求 Kiro 本地 API 失败: {}", err))
+}
+
 async fn proxy_request_with_account_pool(
     request: &ParsedRequest,
     collection: &CodexLocalAccessCollection,
@@ -6659,6 +6757,12 @@ async fn proxy_request_with_account_pool(
     let mut attempts = 0usize;
     let mut retry_round = 0usize;
     let mut earliest_cooldown_wait: Option<Duration>;
+    let request_targets_kiro = request_targets_kiro_model(request);
+    let has_codex_accounts = collection
+        .account_ids
+        .iter()
+        .any(|account_id| !is_kiro_local_access_account_id(account_id));
+    let allow_kiro_fallback = !request_targets_kiro && !has_codex_accounts;
 
     loop {
         let start = GATEWAY_ROUND_ROBIN_CURSOR.fetch_add(1, Ordering::Relaxed);
@@ -6689,6 +6793,14 @@ async fn proxy_request_with_account_pool(
                 break;
             }
 
+            let is_kiro_account = is_kiro_local_access_account_id(&account_id);
+            if is_kiro_account && !request_targets_kiro && !allow_kiro_fallback {
+                continue;
+            }
+            if !is_kiro_account && request_targets_kiro {
+                continue;
+            }
+
             if let Some(wait) = get_model_cooldown_wait(&account_id, &routing_hint.model_key).await
             {
                 round_cooldown_wait = Some(match round_cooldown_wait {
@@ -6700,6 +6812,56 @@ async fn proxy_request_with_account_pool(
 
             attempted_in_round = true;
             attempts += 1;
+
+            if is_kiro_account {
+                let raw_kiro_account_id =
+                    strip_kiro_local_access_account_id(&account_id).unwrap_or_default();
+                let kiro_account = match kiro_account::load_account(raw_kiro_account_id) {
+                    Some(account) => account,
+                    None => {
+                        last_error = format!("Kiro 账号不存在: {}", raw_kiro_account_id);
+                        continue;
+                    }
+                };
+                last_account_id = Some(account_id.clone());
+                last_account_email = Some(kiro_account.email.clone());
+                let kiro_model = if request_targets_kiro {
+                    routing_hint.model_key.as_str()
+                } else {
+                    "auto"
+                };
+
+                match send_kiro_local_request(
+                    &request.method,
+                    &request.target,
+                    &request.headers,
+                    &request.body,
+                    kiro_model,
+                )
+                .await
+                {
+                    Ok(response) if response.status().is_success() => {
+                        clear_model_cooldown(&account_id, &routing_hint.model_key).await;
+                        return Ok(ProxyDispatchSuccess {
+                            upstream: response,
+                            account_id: account_id.clone(),
+                            account_email: kiro_account.email,
+                        });
+                    }
+                    Ok(response) => {
+                        let status = response.status();
+                        let body = response.text().await.unwrap_or_default();
+                        last_status = status.as_u16();
+                        last_error = summarize_upstream_error(status, &body);
+                        continue;
+                    }
+                    Err(err) => {
+                        last_status = StatusCode::BAD_GATEWAY.as_u16();
+                        last_error = err;
+                        continue;
+                    }
+                }
+            }
 
             let mut account = match get_prepared_account(&account_id).await {
                 Ok(account) => account,

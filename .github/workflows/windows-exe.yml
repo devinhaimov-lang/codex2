@@ -2,6 +2,11 @@ name: Windows EXE
 
 on:
   workflow_dispatch:
+    inputs:
+      retention_days:
+        description: "Artifact retention days"
+        required: false
+        default: "14"
   push:
     branches:
       - main
@@ -33,18 +38,30 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Sync versions
+        run: npm run sync-version
+
       - name: Build Windows app
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx tauri build --ci
+        run: npx tauri build --ci 2>&1 | Tee-Object -FilePath windows-build.log
 
       - name: Upload Windows bundles
         uses: actions/upload-artifact@v4
         with:
           name: Codex-Lite-Windows
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ inputs.retention_days || 14 }}
           path: |
-            target/release/bundle/nsis/*.exe
-            target/release/bundle/msi/*.msi
-            target/release/*.exe
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/*.exe
+
+      - name: Upload Windows build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Codex-Lite-Windows-Build-Log
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days || 14 }}
+          path: windows-build.log

@@ -74,6 +74,7 @@ export interface CodexLocalAccessState {
   baseUrl: string | null;
   lanBaseUrl: string | null;
   modelIds: string[];
+  activeModelId?: string | null;
   lastError: string | null;
   memberCount: number;
   stats: CodexLocalAccessStats;

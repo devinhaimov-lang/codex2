@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Codex Lite 验证码生成器</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f7f9;
+        --panel: #ffffff;
+        --text: #111827;
+        --muted: #6b7280;
+        --border: #d7dce4;
+        --primary: #2563eb;
+        --primary-pressed: #1d4ed8;
+        --danger: #b91c1c;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        padding: max(18px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom));
+        background: var(--bg);
+        color: var(--text);
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei",
+          sans-serif;
+      }
+
+      main {
+        width: min(100%, 420px);
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        padding: 22px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--panel);
+        box-shadow: 0 18px 48px rgba(15, 23, 42, 0.12);
+      }
+
+      header {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 20px;
+        line-height: 1.25;
+        font-weight: 700;
+        letter-spacing: 0;
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      label {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      textarea,
+      input {
+        width: 100%;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: #ffffff;
+        color: var(--text);
+        font: inherit;
+        font-size: 16px;
+        outline: none;
+      }
+
+      textarea {
+        min-height: 104px;
+        resize: vertical;
+        padding: 12px;
+        line-height: 1.45;
+      }
+
+      input {
+        height: 48px;
+        padding: 0 12px;
+        font-weight: 700;
+        letter-spacing: 0;
+      }
+
+      textarea:focus,
+      input:focus {
+        border-color: rgba(37, 99, 235, 0.55);
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+      }
+
+      .actions {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 10px;
+      }
+
+      button {
+        height: 48px;
+        border: 0;
+        border-radius: 8px;
+        background: var(--primary);
+        color: #ffffff;
+        font: inherit;
+        font-size: 15px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      button:active {
+        background: var(--primary-pressed);
+      }
+
+      button.secondary {
+        border: 1px solid var(--border);
+        background: #ffffff;
+        color: var(--text);
+      }
+
+      button.secondary:active {
+        background: #eef2f7;
+      }
+
+      .status {
+        min-height: 20px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .status.error {
+        color: var(--danger);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Codex Lite 验证码生成器</h1>
+        <p>粘贴机器码后生成验证码，可直接复制发回给用户。</p>
+      </header>
+
+      <label>
+        机器码
+        <textarea id="machineCode" placeholder="例如：ABCD-1234-EFGH" autofocus></textarea>
+      </label>
+
+      <div class="actions">
+        <button id="generateButton" type="button">生成验证码</button>
+        <button id="clearButton" class="secondary" type="button">清空</button>
+      </div>
+
+      <label>
+        验证码
+        <input id="unlockCode" readonly placeholder="生成后显示在这里" />
+      </label>
+
+      <button id="copyButton" class="secondary" type="button">复制验证码</button>
+      <div id="status" class="status" aria-live="polite"></div>
+    </main>
+
+    <script>
+      const LITE_UNLOCK_SALT = "codex-lite-unlock-v1:7c5a9e41d8f64b32";
+      const LITE_UNLOCK_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+
+      const machineCodeInput = document.getElementById("machineCode");
+      const unlockCodeInput = document.getElementById("unlockCode");
+      const generateButton = document.getElementById("generateButton");
+      const clearButton = document.getElementById("clearButton");
+      const copyButton = document.getElementById("copyButton");
+      const statusEl = document.getElementById("status");
+
+      function normalizeLiteUnlockValue(value) {
+        return value.replace(/[^0-9a-z]/gi, "").toUpperCase();
+      }
+
+      function formatLiteUnlockChunks(value) {
+        return value.match(/.{1,4}/g)?.join("-") || "";
+      }
+
+      async function sha256Bytes(value) {
+        const data = new TextEncoder().encode(value);
+        const digest = await crypto.subtle.digest("SHA-256", data);
+        return Array.from(new Uint8Array(digest));
+      }
+
+      async function buildUnlockCode(machineCode) {
+        const normalizedMachineCode = normalizeLiteUnlockValue(machineCode);
+        if (!normalizedMachineCode) {
+          throw new Error("请输入机器码");
+        }
+
+        const digest = await sha256Bytes(`${LITE_UNLOCK_SALT}|${normalizedMachineCode}`);
+        let code = "";
+        for (const byte of digest.slice(0, 12)) {
+          code += LITE_UNLOCK_ALPHABET[byte % LITE_UNLOCK_ALPHABET.length];
+        }
+        return formatLiteUnlockChunks(code);
+      }
+
+      function setStatus(message, isError = false) {
+        statusEl.textContent = message;
+        statusEl.className = isError ? "status error" : "status";
+      }
+
+      async function generateCode() {
+        try {
+          const code = await buildUnlockCode(machineCodeInput.value);
+          unlockCodeInput.value = code;
+          setStatus("已生成验证码");
+        } catch (error) {
+          unlockCodeInput.value = "";
+          setStatus(error.message || String(error), true);
+        }
+      }
+
+      generateButton.addEventListener("click", () => {
+        void generateCode();
+      });
+
+      clearButton.addEventListener("click", () => {
+        machineCodeInput.value = "";
+        unlockCodeInput.value = "";
+        setStatus("");
+        machineCodeInput.focus();
+      });
+
+      copyButton.addEventListener("click", async () => {
+        const code = unlockCodeInput.value.trim();
+        if (!code) {
+          setStatus("请先生成验证码", true);
+          return;
+        }
+
+        try {
+          await navigator.clipboard.writeText(code);
+          setStatus("验证码已复制");
+        } catch {
+          unlockCodeInput.select();
+          document.execCommand("copy");
+          setStatus("验证码已复制");
+        }
+      });
+
+      machineCodeInput.addEventListener("input", () => {
+        if (unlockCodeInput.value) {
+          unlockCodeInput.value = "";
+          setStatus("");
+        }
+      });
+    </script>
+  </body>
+</html>

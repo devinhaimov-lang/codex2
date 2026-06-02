@@ -29,6 +29,7 @@ const COCKPIT_API_DEFAULT_ACCOUNT_NAME: &str = "Codex API";
 const API_KEY_EMAIL_PREFIX: &str = "api-key";
 const API_KEY_AUTH_MODE: &str = "apikey";
 const CODEX_CONFIG_FILE_NAME: &str = "config.toml";
+const CODEX_CONFIG_MODEL_KEY: &str = "model";
 const CODEX_CONFIG_OPENAI_BASE_URL_KEY: &str = "openai_base_url";
 const CODEX_CONFIG_MODEL_PROVIDER_KEY: &str = "model_provider";
 const CODEX_CONFIG_MODEL_PROVIDERS_KEY: &str = "model_providers";
@@ -729,6 +730,49 @@ pub fn save_current_quick_config(
         model_context_window,
         auto_compact_token_limit,
     )
+}
+
+pub fn read_current_model_from_config_toml(base_dir: &Path) -> Option<String> {
+    let config_path = get_config_toml_path(base_dir);
+    let content = fs::read_to_string(config_path).ok()?;
+    if content.trim().is_empty() {
+        return None;
+    }
+    let doc = content.parse::<Document>().ok()?;
+    doc.get(CODEX_CONFIG_MODEL_KEY)
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .map(str::to_string)
+}
+
+pub fn write_current_model_to_config_toml(base_dir: &Path, model_id: &str) -> Result<(), String> {
+    let model_id = model_id.trim();
+    if model_id.is_empty() {
+        return Err("模型不能为空".to_string());
+    }
+    if model_id.contains('\n') || model_id.contains('\r') {
+        return Err("模型名称不能包含换行".to_string());
+    }
+
+    let config_path = get_config_toml_path(base_dir);
+    let existing = fs::read_to_string(&config_path).unwrap_or_default();
+    let mut doc = if existing.trim().is_empty() {
+        Document::new()
+    } else {
+        existing
+            .parse::<Document>()
+            .map_err(|e| format!("解析 config.toml 失败: {}", e))?
+    };
+
+    doc[CODEX_CONFIG_MODEL_KEY] = value(model_id);
+
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建 config.toml 目录失败: {}", e))?;
+    }
+    let content = doc.to_string();
+    crate::modules::atomic_write::write_string_atomic(&config_path, &content)
+        .map_err(|e| format!("写入 config.toml 失败: {}", e))
 }
 
 pub fn save_quick_config_for_base_dir(

@@ -1045,6 +1045,19 @@ pub async fn codex_local_access_activate(app: AppHandle) -> Result<CodexLocalAcc
 }
 
 #[tauri::command]
+pub async fn codex_local_access_activate_model(
+    model_id: String,
+) -> Result<CodexLocalAccessState, String> {
+    let model_id = model_id.trim().to_string();
+    let codex_home = codex_account::get_codex_home();
+    codex_local_access::activate_local_access_for_dir(&codex_home).await?;
+    codex_account::write_current_model_to_config_toml(&codex_home, &model_id)?;
+    let state = codex_local_access::get_local_access_state().await?;
+    logger::log_info(&format!("已将 Codex CLI API 服务模型切换为: {}", model_id));
+    Ok(state)
+}
+
+#[tauri::command]
 pub async fn codex_local_access_test() -> Result<CodexLocalAccessTestResult, String> {
     codex_local_access::test_local_access_with_cli().await
 }

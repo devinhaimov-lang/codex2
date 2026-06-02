@@ -12,6 +12,7 @@ use crate::modules::{account, kiro_oauth, logger};
 const ACCOUNTS_INDEX_FILE: &str = "kiro_accounts.json";
 const ACCOUNTS_DIR: &str = "kiro_accounts";
 const LOCAL_AUTH_TOKEN_FILE_NAME: &str = "kiro-auth-token.json";
+const LOCAL_AUTH_TOKEN_CLI_FILE_NAME: &str = "kiro-auth-token-cli.json";
 const LOCAL_USAGE_DB_KEY: &str = "kiro.kiroAgent";
 const KIRO_QUOTA_ALERT_COOLDOWN_SECONDS: i64 = 10 * 60;
 
@@ -1386,16 +1387,34 @@ pub fn get_default_kiro_auth_token_path() -> Result<PathBuf, String> {
 }
 
 pub fn read_local_auth_token_json() -> Result<Option<Value>, String> {
-    let path = get_default_kiro_auth_token_path()?;
-    if !path.exists() {
-        return Ok(None);
+    let primary_path = get_default_kiro_auth_token_path()?;
+    let mut candidate_paths = vec![
+        primary_path.clone(),
+        primary_path
+            .parent()
+            .map(|parent| parent.join(LOCAL_AUTH_TOKEN_CLI_FILE_NAME))
+            .unwrap_or_else(|| PathBuf::from(LOCAL_AUTH_TOKEN_CLI_FILE_NAME)),
+    ];
+    candidate_paths.sort_by_key(|path| {
+        fs::metadata(path)
+            .and_then(|meta| meta.modified())
+            .ok()
+            .map(std::cmp::Reverse)
+    });
+
+    for path in candidate_paths {
+        if !path.exists() {
+            continue;
+        }
+
+        let raw = fs::read_to_string(&path)
+            .map_err(|e| format!("读取 Kiro 本地授权文件失败({}): {}", path.display(), e))?;
+        let parsed = serde_json::from_str::<Value>(&raw)
+            .map_err(|e| format!("解析 Kiro 本地授权文件失败({}): {}", path.display(), e))?;
+        return Ok(Some(parsed));
     }
 
-    let raw = fs::read_to_string(&path)
-        .map_err(|e| format!("读取 Kiro 本地授权文件失败({}): {}", path.display(), e))?;
-    let parsed = serde_json::from_str::<Value>(&raw)
-        .map_err(|e| format!("解析 Kiro 本地授权文件失败({}): {}", path.display(), e))?;
-    Ok(Some(parsed))
+    Ok(None)
 }
 
 pub fn read_local_profile_json() -> Result<Option<Value>, String> {

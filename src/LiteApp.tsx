@@ -2,11 +2,12 @@ import { Suspense, lazy, useEffect, useState } from 'react';
 import './App.css';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
+import { save } from '@tauri-apps/plugin-dialog';
+import { ChevronDown, Download, MessageSquare, RefreshCw } from 'lucide-react';
 import { GlobalModal } from './components/GlobalModal';
 import { LiteUnlockGate } from './components/LiteUnlockGate';
 import { CodexIcon } from './components/icons/CodexIcon';
 import { changeLanguage, getCurrentLanguage, normalizeLanguage, supportedLanguages } from './i18n';
-
 
 const languageLabels: Record<string, string> = {
   en: 'English',
@@ -29,6 +30,55 @@ const languageLabels: Record<string, string> = {
 };
 
 type GeneralConfig = Record<string, any>;
+type LiteNavTab = 'accounts' | 'chat' | 'install';
+type LiteAccountPlatform = 'codex' | 'kiro';
+
+type CodexLiteExportRequest = {
+  type: 'codex-lite-export-chat';
+  payload?: string;
+  fileName?: string;
+};
+
+type CodexLiteExportResult = {
+  type: 'codex-lite-export-chat-result';
+  status: 'success' | 'cancelled' | 'error';
+  message?: string;
+  path?: string;
+};
+
+type CodexLiteSaveImageRequest = {
+  type: 'codex-lite-save-image';
+  payload?: string;
+  fileName?: string;
+  mimeType?: string;
+};
+
+type CodexLiteSaveImageResult = {
+  type: 'codex-lite-save-image-result';
+  status: 'success' | 'cancelled' | 'error';
+  message?: string;
+  path?: string;
+};
+
+type CodexLitePersistChatSaveRequest = {
+  type: 'codex-lite-persist-chat-save';
+  payload?: string;
+};
+
+type CodexLitePersistChatLoadRequest = {
+  type: 'codex-lite-persist-chat-load';
+};
+
+type CodexLitePersistChatLoadResult = {
+  type: 'codex-lite-persist-chat-load-result';
+  status: 'success' | 'error';
+  payload?: string;
+  message?: string;
+};
+
+const LITE_SELECTED_TAB_KEY = 'codex-lite.selected-tab';
+const LITE_SELECTED_ACCOUNT_PLATFORM_KEY = 'codex-lite.selected-account-platform';
+const CODEX_CHAT_URL = 'http://127.0.0.1:3510/';
 
 function buildSaveGeneralConfigArgs(config: GeneralConfig, language: string) {
   return {
@@ -142,6 +192,12 @@ async function persistLanguage(language: string) {
 const CodexAccountsPage = lazy(() =>
   import('./pages/CodexAccountsPage').then((module) => ({ default: module.CodexAccountsPage })),
 );
+const KiroAccountsPage = lazy(() =>
+  import('./pages/KiroAccountsPage').then((module) => ({ default: module.KiroAccountsPage })),
+);
+const InstallToolsPage = lazy(() =>
+  import('./pages/InstallToolsPage').then((module) => ({ default: module.InstallToolsPage })),
+);
 
 const suspenseFallback = (
   <div className="loading-container">
@@ -151,6 +207,16 @@ const suspenseFallback = (
 
 export default function LiteApp() {
   const [language, setLanguage] = useState(getCurrentLanguage());
+  const [activeTab, setActiveTab] = useState<LiteNavTab>(() => {
+    if (typeof window === 'undefined') return 'accounts';
+    const saved = localStorage.getItem(LITE_SELECTED_TAB_KEY);
+    return saved === 'chat' || saved === 'install' ? saved : 'accounts';
+  });
+  const [accountPlatform, setAccountPlatform] = useState<LiteAccountPlatform>(() => {
+    if (typeof window === 'undefined') return 'codex';
+    return localStorage.getItem(LITE_SELECTED_ACCOUNT_PLATFORM_KEY) === 'kiro' ? 'kiro' : 'codex';
+  });
+  const [chatFrameKey, setChatFrameKey] = useState(0);
 
   useEffect(() => {
     let disposed = false;
@@ -190,6 +256,152 @@ export default function LiteApp() {
     };
   }, []);
 
+  useEffect(() => {
+    localStorage.setItem(LITE_SELECTED_TAB_KEY, activeTab);
+  }, [activeTab]);
+
+  useEffect(() => {
+    localStorage.setItem(LITE_SELECTED_ACCOUNT_PLATFORM_KEY, accountPlatform);
+  }, [accountPlatform]);
+
+  useEffect(() => {
+    const handleMessage = async (
+      event: MessageEvent<
+        | CodexLiteExportRequest
+        | CodexLiteSaveImageRequest
+        | CodexLitePersistChatSaveRequest
+        | CodexLitePersistChatLoadRequest
+      >,
+    ) => {
+      const replyTarget = event.source as Window | null;
+      const postResult = (
+        result: CodexLiteExportResult | CodexLiteSaveImageResult | CodexLitePersistChatLoadResult,
+      ) => {
+        replyTarget?.postMessage(result, '*');
+      };
+
+      try {
+        if (event.data?.type === 'codex-lite-persist-chat-save') {
+          await invoke('save_codex_lite_chat', {
+            content: typeof event.data.payload === 'string' ? event.data.payload : '[]',
+          });
+          return;
+        }
+
+        if (event.data?.type === 'codex-lite-persist-chat-load') {
+          const payload = await invoke<string>('load_codex_lite_chat');
+          postResult({
+            type: 'codex-lite-persist-chat-load-result',
+            status: 'success',
+            payload,
+          });
+          return;
+        }
+
+        if (event.data?.type === 'codex-lite-save-image') {
+          const payload = typeof event.data.payload === 'string' ? event.data.payload : '';
+          if (!payload) {
+            postResult({
+              type: 'codex-lite-save-image-result',
+              status: 'error',
+              message: '缺少图片内容',
+            });
+            return;
+          }
+
+          const extensions = (() => {
+            switch (event.data.mimeType) {
+              case 'image/jpeg':
+                return ['jpg', 'jpeg'];
+              case 'image/webp':
+                return ['webp'];
+              case 'image/gif':
+                return ['gif'];
+              default:
+                return ['png'];
+            }
+          })();
+
+          const targetPath = await save({
+            defaultPath: event.data.fileName || `codex-lite-image.${extensions[0]}`,
+            filters: [{ name: 'Image', extensions }],
+          });
+          if (!targetPath) {
+            postResult({
+              type: 'codex-lite-save-image-result',
+              status: 'cancelled',
+            });
+            return;
+          }
+
+          await invoke('save_binary_file', {
+            path: targetPath,
+            base64Content: payload,
+          });
+          postResult({
+            type: 'codex-lite-save-image-result',
+            status: 'success',
+            path: targetPath,
+          });
+          return;
+        }
+
+        if (event.data?.type !== 'codex-lite-export-chat') return;
+        const payload = typeof event.data.payload === 'string' ? event.data.payload : '';
+        if (!payload) {
+          postResult({
+            type: 'codex-lite-export-chat-result',
+            status: 'error',
+            message: '缺少导出内容',
+          });
+          return;
+        }
+        const targetPath = await save({
+          defaultPath: event.data.fileName || 'codex-lite-chat.json',
+          filters: [{ name: 'JSON', extensions: ['json'] }],
+        });
+        if (!targetPath) {
+          postResult({
+            type: 'codex-lite-export-chat-result',
+            status: 'cancelled',
+          });
+          return;
+        }
+        await invoke('save_text_file', {
+          path: targetPath,
+          content: payload,
+        });
+        postResult({
+          type: 'codex-lite-export-chat-result',
+          status: 'success',
+          path: targetPath,
+        });
+      } catch (error) {
+        if (event.data?.type === 'codex-lite-persist-chat-load') {
+          postResult({
+            type: 'codex-lite-persist-chat-load-result',
+            status: 'error',
+            message: error instanceof Error ? error.message : String(error),
+          });
+          return;
+        }
+        postResult({
+          type:
+            event.data?.type === 'codex-lite-save-image'
+              ? 'codex-lite-save-image-result'
+              : 'codex-lite-export-chat-result',
+          status: 'error',
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => {
+      window.removeEventListener('message', handleMessage);
+    };
+  }, []);
+
   const handleLanguageChange = async (value: string) => {
     const nextLanguage = normalizeLanguage(value);
     setLanguage(nextLanguage);
@@ -203,37 +415,109 @@ export default function LiteApp() {
   return (
     <LiteUnlockGate>
       <div className="lite-app-shell">
-      <aside className="lite-sidebar">
-        <div className="lite-brand">
-          <CodexIcon size={24} />
-          <div>
-            <div className="lite-brand-title">Codex Lite</div>
-            <div className="lite-brand-subtitle">Account Manager</div>
+        <aside className="lite-sidebar">
+          <div className="lite-brand">
+            <CodexIcon size={24} />
+            <div>
+              <div className="lite-brand-title">Codex Lite</div>
+              <div className="lite-brand-subtitle">Account Manager</div>
+            </div>
           </div>
-        </div>
 
-        <div className="lite-nav-item active">
-          <CodexIcon size={18} />
-          <span>Codex</span>
-        </div>
+          <label
+            className={`lite-nav-select ${activeTab === 'accounts' ? 'active' : ''}`}
+            onClick={() => setActiveTab('accounts')}
+          >
+            <div className="lite-nav-select-header">
+              <div className="lite-nav-select-label">
+                <CodexIcon size={18} />
+                <span>账号</span>
+              </div>
+              <span className="lite-nav-select-badge">
+                {accountPlatform === 'codex' ? 'Codex' : 'Kiro'}
+              </span>
+            </div>
+            <div className="lite-nav-select-control">
+              <select
+                value={accountPlatform}
+                onChange={(event) => {
+                  setActiveTab('accounts');
+                  setAccountPlatform(event.target.value as LiteAccountPlatform);
+                }}
+              >
+                <option value="codex">Codex 账号</option>
+                <option value="kiro">Kiro 账号</option>
+              </select>
+              <ChevronDown size={15} className="lite-nav-select-chevron" />
+            </div>
+          </label>
 
-        <label className="lite-language-select">
-          <span>Language</span>
-          <select value={language} onChange={(e) => void handleLanguageChange(e.target.value)}>
-            {supportedLanguages.map((item) => (
-              <option key={item} value={item}>
-                {languageLabels[item] || item}
-              </option>
-            ))}
-          </select>
-        </label>
-      </aside>
+          <button
+            type="button"
+            className={`lite-nav-item ${activeTab === 'chat' ? 'active' : ''}`}
+            onClick={() => setActiveTab('chat')}
+          >
+            <MessageSquare size={18} />
+            <span>聊天</span>
+          </button>
 
-      <main className="lite-main">
-        <Suspense fallback={suspenseFallback}>
-          <CodexAccountsPage />
-        </Suspense>
-      </main>
+          <button
+            type="button"
+            className={`lite-nav-item ${activeTab === 'install' ? 'active' : ''}`}
+            onClick={() => setActiveTab('install')}
+          >
+            <Download size={18} />
+            <span>安装工具</span>
+          </button>
+
+          <label className="lite-language-select">
+            <span>Language</span>
+            <select value={language} onChange={(e) => void handleLanguageChange(e.target.value)}>
+              {supportedLanguages.map((item) => (
+                <option key={item} value={item}>
+                  {languageLabels[item] || item}
+                </option>
+              ))}
+            </select>
+          </label>
+        </aside>
+
+        <main className="lite-main">
+          {activeTab === 'accounts' ? (
+            <Suspense fallback={suspenseFallback}>
+              {accountPlatform === 'codex' ? <CodexAccountsPage /> : <KiroAccountsPage />}
+            </Suspense>
+          ) : activeTab === 'install' ? (
+            <Suspense fallback={suspenseFallback}>
+              <InstallToolsPage />
+            </Suspense>
+          ) : (
+            <section className="lite-embedded-page">
+              <header className="lite-embedded-toolbar">
+                <div className="lite-embedded-ad-placeholder" aria-hidden="true" />
+                <div className="lite-embedded-toolbar-actions">
+                  <button
+                    type="button"
+                    className="lite-toolbar-btn"
+                    onClick={() => setChatFrameKey((value) => value + 1)}
+                  >
+                    <RefreshCw size={16} />
+                    <span>刷新</span>
+                  </button>
+                </div>
+              </header>
+
+              <div className="lite-embedded-frame-shell">
+                <iframe
+                  key={chatFrameKey}
+                  className="lite-embedded-frame"
+                  src={CODEX_CHAT_URL}
+                  title="Codex Lite Chat"
+                />
+              </div>
+            </section>
+          )}
+        </main>
 
         <GlobalModal />
       </div>

@@ -1251,6 +1251,77 @@
   opacity: 1;
 }
 
+.kiro-local-api-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid rgba(20, 184, 166, 0.24);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at top left, rgba(20, 184, 166, 0.18), transparent 34%),
+    linear-gradient(135deg, rgba(15, 118, 110, 0.08), rgba(2, 132, 199, 0.06));
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
+}
+
+.kiro-local-api-main {
+  min-width: 0;
+}
+
+.kiro-local-api-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-color);
+}
+
+.kiro-local-api-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #94a3b8;
+  box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.14);
+}
+
+.kiro-local-api-dot.online {
+  background: #14b8a6;
+  box-shadow: 0 0 0 4px rgba(20, 184, 166, 0.16), 0 0 18px rgba(20, 184, 166, 0.55);
+}
+
+.kiro-local-api-desc {
+  margin-top: 5px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.kiro-local-api-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.kiro-local-api-actions .btn {
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 10px;
+}
+
+@media (max-width: 720px) {
+  .kiro-local-api-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .kiro-local-api-actions {
+    flex-wrap: wrap;
+  }
+}
+
 .ghcp-accounts-page .toolbar .btn.icon-only {
   width: 32px;
   min-height: 32px;

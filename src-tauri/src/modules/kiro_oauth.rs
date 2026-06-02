@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::net::TcpListener;
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 use url::Url;
 
@@ -1469,9 +1470,47 @@ pub fn build_payload_from_local_files() -> Result<KiroOAuthCompletePayload, Stri
     let auth_token = kiro_account::read_local_auth_token_json()?.ok_or_else(|| {
         "未在本机找到 Kiro 登录信息（~/.aws/sso/cache/kiro-auth-token.json）".to_string()
     })?;
-    let profile = kiro_account::read_local_profile_json()?;
+    let profile = merge_cli_whoami_profile(kiro_account::read_local_profile_json()?);
     let usage = kiro_account::read_local_usage_snapshot()?;
     build_payload_from_snapshot(auth_token, profile, usage)
+}
+
+fn merge_cli_whoami_profile(profile: Option<Value>) -> Option<Value> {
+    let Some(email) = read_kiro_cli_whoami_email() else {
+        return profile;
+    };
+
+    let mut merged = profile.unwrap_or_else(|| json!({}));
+    if !merged.is_object() {
+        merged = json!({});
+    }
+    if let Some(obj) = merged.as_object_mut() {
+        obj.insert("email".to_string(), Value::String(email.clone()));
+        obj.insert("name".to_string(), Value::String(email));
+    }
+    Some(merged)
+}
+
+fn read_kiro_cli_whoami_email() -> Option<String> {
+    let home = dirs::home_dir()?;
+    let binary = home.join(".local").join("bin").join("kiro-cli-chat");
+    if !binary.is_file() {
+        return None;
+    }
+    let output = Command::new(binary).arg("whoami").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        if key.trim().eq_ignore_ascii_case("email") {
+            return normalize_email(Some(value.trim().to_string()));
+        }
+    }
+    None
 }
 
 async fn refresh_token_via_remote(refresh_token: &str) -> Result<Value, String> {

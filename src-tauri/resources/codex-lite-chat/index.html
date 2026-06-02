@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>本地聊天</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div>
+          <h1>本地聊天</h1>
+          <p id="endpoint">连接中...</p>
+        </div>
+        <div class="top-actions">
+          <div id="providerSwitch" class="provider-switch" role="tablist" aria-label="来源切换">
+            <button type="button" data-provider="codex" aria-pressed="true">Codex</button>
+            <button type="button" data-provider="kiro" aria-pressed="false">Kiro</button>
+          </div>
+          <select id="modelSelect" aria-label="模型"></select>
+          <button id="newChatBtn" type="button">新对话</button>
+          <button id="exportChatBtn" type="button" class="secondary">导出记录</button>
+          <button id="importChatBtn" type="button" class="secondary">导入记录</button>
+          <button id="copyApiBtn" type="button" class="secondary">复制 API 配置</button>
+        </div>
+      </header>
+
+      <section id="messages" class="messages"></section>
+
+      <section id="composerPanel" class="composer-panel">
+        <input id="attachmentInput" type="file" multiple hidden>
+        <input id="importChatInput" type="file" accept="application/json,.json" hidden>
+        <div id="attachmentList" class="attachment-list" hidden></div>
+        <form id="chatForm" class="composer">
+          <button id="attachBtn" class="attach-btn" type="button">添加附件</button>
+          <textarea id="promptInput" rows="3" placeholder="输入消息，Enter 发送，Shift + Enter 换行"></textarea>
+          <button id="sendBtn" type="submit">发送</button>
+        </form>
+      </section>
+
+      <div class="status">
+        <span id="statusDot" class="dot"></span>
+        <span id="statusText">准备连接 Codex</span>
+      </div>
+    </main>
+
+    <template id="messageTemplate">
+      <article class="message">
+        <div class="meta"></div>
+        <div class="body"></div>
+      </article>
+    </template>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

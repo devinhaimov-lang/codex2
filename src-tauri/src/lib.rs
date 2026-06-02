@@ -9,10 +9,10 @@ use modules::logger;
 use std::sync::OnceLock;
 #[cfg(target_os = "macos")]
 use tauri::ActivationPolicy;
+use tauri::Manager;
 #[cfg(target_os = "macos")]
 use tauri::RunEvent;
 use tauri::WindowEvent;
-use tauri::{Emitter, Manager};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tracing::info;
 
@@ -145,6 +145,12 @@ pub fn run() {
             tauri::async_runtime::spawn(async {
                 modules::codex_local_access::restore_local_access_gateway().await;
             });
+
+            tauri::async_runtime::spawn(async {
+                modules::kiro_local_api::start_server().await;
+            });
+
+            modules::codex_lite_chat::ensure_started();
 
             {
                 let app_handle = app.handle().clone();
@@ -288,9 +294,8 @@ pub fn run() {
                         window.app_handle().exit(0);
                     }
                     CloseWindowBehavior::Ask => {
-                        api.prevent_close();
-                        let _ = window.emit("window:close_requested", ());
-                        info!("[Window] 等待用户选择关闭行为");
+                        info!("[Window] Lite 版本默认直接退出应用");
+                        window.app_handle().exit(0);
                     }
                 }
             }
@@ -365,6 +370,11 @@ pub fn run() {
             commands::system::verify_lite_unlock_code,
             commands::system::open_data_folder,
             commands::system::save_text_file,
+            commands::system::save_binary_file,
+            commands::system::save_codex_lite_chat,
+            commands::system::load_codex_lite_chat,
+            commands::system::get_codex_cli_provider,
+            commands::system::set_codex_cli_provider,
             commands::system::get_downloads_dir,
             commands::system::get_auto_backup_settings,
             commands::system::save_auto_backup_settings,
@@ -380,6 +390,7 @@ pub fn run() {
             commands::system::save_network_config,
             commands::system::get_general_config,
             commands::system::get_available_terminals,
+            commands::system::install_cli_tool,
             commands::system::save_general_config,
             commands::system::save_tray_platform_layout,
             commands::system::set_app_path,
@@ -514,6 +525,7 @@ pub fn run() {
             commands::codex::codex_local_access_update_access_scope,
             commands::codex::codex_local_access_set_enabled,
             commands::codex::codex_local_access_activate,
+            commands::codex::codex_local_access_activate_model,
             commands::codex::codex_local_access_test,
             // GitHub Copilot Commands
             commands::github_copilot::list_github_copilot_accounts,
@@ -577,6 +589,8 @@ pub fn run() {
             commands::kiro::update_kiro_account_tags,
             commands::kiro::get_kiro_accounts_index_path,
             commands::kiro::inject_kiro_to_vscode,
+            commands::kiro::kiro_local_api_get_state,
+            commands::kiro::kiro_local_api_test,
             // CodeBuddy Commands
             commands::codebuddy::list_codebuddy_accounts,
             commands::codebuddy::delete_codebuddy_account,

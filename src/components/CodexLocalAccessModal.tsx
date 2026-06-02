@@ -22,6 +22,7 @@ import {
 import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog';
 import { useTranslation } from 'react-i18next';
 import type { CodexAccount } from '../types/codex';
+import type { KiroAccount } from '../types/kiro';
 import type { CodexAccountGroup } from '../services/codexAccountGroupService';
 import type {
   CodexLocalAccessAddressKind,
@@ -65,6 +66,7 @@ interface CodexLocalAccessModalProps {
   addressOptions: Array<{ value: string; label: string }>;
   onAddressKindChange: (value: string) => void;
   accounts: CodexAccount[];
+  kiroAccounts?: KiroAccount[];
   accountGroups: CodexAccountGroup[];
   initialSelectedIds: string[];
   maskAccountText: (value?: string | null) => string;
@@ -111,6 +113,26 @@ const CUSTOM_ROUTING_PRIORITY_MIN = 0;
 const CUSTOM_ROUTING_PRIORITY_MAX = 100;
 const CUSTOM_ROUTING_WEIGHT_MIN = 1;
 const CUSTOM_ROUTING_WEIGHT_MAX = 100;
+const KIRO_LOCAL_ACCESS_ACCOUNT_PREFIX = 'kiro:';
+
+type LocalAccessProvider = 'codex' | 'kiro';
+
+interface LocalAccessSelectableAccount {
+  id: string;
+  rawId: string;
+  provider: LocalAccessProvider;
+  displayName: string;
+  planLabel: string;
+  planClass: string;
+  tags: string[];
+  groupText: string;
+  codexAccount?: CodexAccount;
+  kiroAccount?: KiroAccount;
+}
+
+function makeKiroLocalAccessAccountId(accountId: string): string {
+  return `${KIRO_LOCAL_ACCESS_ACCOUNT_PREFIX}${accountId}`;
+}
 
 function normalizeAccessScope(value: string): CodexLocalAccessScope {
   return value === 'lan' ? 'lan' : 'localhost';
@@ -190,6 +212,7 @@ export function CodexLocalAccessModal({
   addressOptions,
   onAddressKindChange,
   accounts,
+  kiroAccounts = [],
   accountGroups,
   initialSelectedIds,
   maskAccountText,
@@ -348,6 +371,38 @@ export function CodexLocalAccessModal({
     () => accounts.filter((account) => !isCodexApiKeyAccount(account)),
     [accounts],
   );
+  const selectableAccounts = useMemo<LocalAccessSelectableAccount[]>(() => {
+    const codexItems = oauthAccounts.map((account) => {
+      const presentation = buildCodexAccountPresentation(account, t);
+      return {
+        id: account.id,
+        rawId: account.id,
+        provider: 'codex' as const,
+        displayName: presentation.displayName,
+        planLabel: presentation.planLabel,
+        planClass: presentation.planClass,
+        tags: account.tags || [],
+        groupText: '',
+        codexAccount: account,
+      };
+    });
+    const kiroItems = kiroAccounts.map((account) => ({
+      id: makeKiroLocalAccessAccountId(account.id),
+      rawId: account.id,
+      provider: 'kiro' as const,
+      displayName: account.email || account.id,
+      planLabel: account.plan_name || account.plan_tier || 'Kiro',
+      planClass: 'team',
+      tags: account.tags || [],
+      groupText: 'Kiro',
+      kiroAccount: account,
+    }));
+    return [...codexItems, ...kiroItems];
+  }, [kiroAccounts, oauthAccounts, t]);
+  const selectableAccountById = useMemo(
+    () => new Map(selectableAccounts.map((account) => [account.id, account])),
+    [selectableAccounts],
+  );
   const quotaPoolSummary = useMemo(
     () => summarizeCodexQuotaPool(oauthAccounts),
     [oauthAccounts],
@@ -357,8 +412,8 @@ export function CodexLocalAccessModal({
     return summarizeCodexQuotaPool(oauthAccounts.filter((account) => accountIds.has(account.id)));
   }, [collection?.accountIds, oauthAccounts]);
   const oauthAccountIdSet = useMemo(
-    () => new Set(oauthAccounts.map((account) => account.id)),
-    [oauthAccounts],
+    () => new Set(selectableAccounts.map((account) => account.id)),
+    [selectableAccounts],
   );
   const normalizedInitialSelectedIds = useMemo(
     () => initialSelectedIds.filter((accountId) => oauthAccountIdSet.has(accountId)),
@@ -442,14 +497,14 @@ export function CodexLocalAccessModal({
 
   const availableTags = useMemo(() => {
     const next = new Set<string>();
-    oauthAccounts.forEach((account) => {
-      (account.tags || []).forEach((tag) => {
+    selectableAccounts.forEach((account) => {
+      account.tags.forEach((tag) => {
         const trimmed = tag.trim();
         if (trimmed) next.add(trimmed);
       });
     });
     return Array.from(next).sort((left, right) => left.localeCompare(right));
-  }, [oauthAccounts]);
+  }, [selectableAccounts]);
 
   const groupIdsByAccountId = useMemo(() => {
     const next = new Map<string, Set<string>>();
@@ -487,7 +542,7 @@ export function CodexLocalAccessModal({
   );
 
   const tierCounts = useMemo(() => {
-    const counts = { all: oauthAccounts.length, VALID: 0, FREE: 0, PLUS: 0, PRO: 0, TEAM: 0, ENTERPRISE: 0, ERROR: 0 };
+    const counts = { all: selectableAccounts.length, VALID: 0, FREE: 0, PLUS: 0, PRO: 0, TEAM: 0, ENTERPRISE: 0, KIRO: 0, ERROR: 0 };
     oauthAccounts.forEach((account) => {
       if (!account.quota_error) {
         counts.VALID += 1;
@@ -500,8 +555,10 @@ export function CodexLocalAccessModal({
         counts.ERROR += 1;
       }
     });
+    counts.KIRO = kiroAccounts.length;
+    counts.VALID += kiroAccounts.length;
     return counts;
-  }, [oauthAccounts]);
+  }, [kiroAccounts.length, oauthAccounts, selectableAccounts.length]);
 
   const allTierFilterLabel = useMemo(
     () =>
@@ -561,6 +618,7 @@ export function CodexLocalAccessModal({
           quotaPoolLabels.weekly,
         ),
       },
+      { value: 'KIRO', label: `Kiro (${tierCounts.KIRO})` },
       { value: 'ERROR', label: `ERROR (${tierCounts.ERROR})` },
       buildValidAccountsFilterOption(t, tierCounts.VALID),
     ],
@@ -569,45 +627,49 @@ export function CodexLocalAccessModal({
 
   const visibleAccounts = useMemo(() => {
     const queryText = query.trim().toLowerCase();
-    const sorted = [...oauthAccounts].sort((a, b) => {
-      const aName = buildCodexAccountPresentation(a, t).displayName.toLowerCase();
-      const bName = buildCodexAccountPresentation(b, t).displayName.toLowerCase();
-      return aName.localeCompare(bName);
+    const sorted = [...selectableAccounts].sort((a, b) => {
+      if (a.provider !== b.provider) return a.provider === 'codex' ? -1 : 1;
+      return a.displayName.toLowerCase().localeCompare(b.displayName.toLowerCase());
     });
     const selectedTags = new Set(tagFilter.map(normalizeTag));
     const selectedGroups = new Set(groupFilter);
     const { requireValidAccounts, selectedTypes } = splitValidityFilterValues(filterTypes);
 
     return sorted.filter((account) => {
-      const presentation = buildCodexAccountPresentation(account, t);
-      const displayName = presentation.displayName.toLowerCase();
-      const groupNames = (groupNameByAccountId.get(account.id) ?? []).join(' ').toLowerCase();
+      const displayName = account.displayName.toLowerCase();
+      const groupNames = account.provider === 'codex'
+        ? (groupNameByAccountId.get(account.id) ?? []).join(' ').toLowerCase()
+        : account.groupText.toLowerCase();
       const matchesQuery =
-        !queryText || displayName.includes(queryText) || groupNames.includes(queryText);
+        !queryText ||
+        displayName.includes(queryText) ||
+        groupNames.includes(queryText) ||
+        account.rawId.toLowerCase().includes(queryText);
       if (!matchesQuery) return false;
 
       if (selectedTags.size > 0) {
-        const accountTags = (account.tags || []).map(normalizeTag);
+        const accountTags = account.tags.map(normalizeTag);
         if (!accountTags.some((tag) => selectedTags.has(tag))) {
           return false;
         }
       }
 
       if (selectedGroups.size > 0) {
+        if (account.provider === 'kiro') return false;
         const accountGroupIds = groupIdsByAccountId.get(account.id);
         if (!accountGroupIds || !Array.from(accountGroupIds).some((id) => selectedGroups.has(id))) {
           return false;
         }
       }
 
-      if (requireValidAccounts && account.quota_error) {
+      if (requireValidAccounts && account.codexAccount?.quota_error) {
         return false;
       }
 
       if (selectedTypes.size > 0) {
-        const planKey = getCodexPlanFilterKey(account);
+        const planKey = account.provider === 'kiro' ? 'KIRO' : getCodexPlanFilterKey(account.codexAccount!);
         const matchesType = Array.from(selectedTypes).some((type) => {
-          if (type === 'ERROR') return Boolean(account.quota_error);
+          if (type === 'ERROR') return Boolean(account.codexAccount?.quota_error);
           return type === planKey;
         });
         if (!matchesType) {
@@ -617,13 +679,14 @@ export function CodexLocalAccessModal({
 
       return true;
     });
-  }, [filterTypes, groupFilter, groupIdsByAccountId, groupNameByAccountId, oauthAccounts, query, t, tagFilter]);
+  }, [filterTypes, groupFilter, groupIdsByAccountId, query, selectableAccounts, tagFilter]);
 
   const visibleSelectableAccounts = useMemo(
     () =>
       visibleAccounts.filter((account) => {
+        if (account.provider === 'kiro') return true;
         if (!restrictFreeAccounts) return true;
-        if (!isCodexExplicitFreePlanType(account.plan_type)) return true;
+        if (!isCodexExplicitFreePlanType(account.codexAccount?.plan_type)) return true;
         return selected.has(account.id);
       }),
     [restrictFreeAccounts, selected, visibleAccounts],
@@ -671,10 +734,17 @@ export function CodexLocalAccessModal({
     const currentIds = collection?.accountIds ?? [];
     return currentIds
       .map((accountId) => {
-        const account = oauthAccounts.find((item) => item.id === accountId);
+        const account = selectableAccountById.get(accountId);
         if (!account) return null;
-        const presentation = buildCodexAccountPresentation(account, t);
         const accountStats = windowStatsByAccountId.get(account.id);
+        const presentation = account.codexAccount
+          ? buildCodexAccountPresentation(account.codexAccount, t)
+          : {
+              displayName: account.displayName,
+              planLabel: account.planLabel,
+              planClass: account.planClass,
+              quotaItems: [],
+            };
         return {
           account,
           presentation,
@@ -687,7 +757,7 @@ export function CodexLocalAccessModal({
         const leftCount = left.stats?.requestCount ?? 0;
         return rightCount - leftCount;
       });
-  }, [collection?.accountIds, oauthAccounts, t, windowStatsByAccountId]);
+  }, [collection?.accountIds, selectableAccountById, t, windowStatsByAccountId]);
 
   const routingStrategyOptions = useMemo(
     () => [
@@ -1005,10 +1075,12 @@ export function CodexLocalAccessModal({
 
   const toggleSelect = (accountId: string) => {
     if (actionBusy) return;
-    const account = oauthAccountById.get(accountId);
+    const account = selectableAccountById.get(accountId);
     if (!account) return;
     setSelected((prev) => {
-      const isFreeAccount = isCodexExplicitFreePlanType(account.plan_type);
+      const isFreeAccount =
+        account.provider === 'codex' &&
+        isCodexExplicitFreePlanType(account.codexAccount?.plan_type);
       if (isFreeAccount && restrictFreeAccounts && !prev.has(accountId)) {
         return prev;
       }
@@ -1027,12 +1099,20 @@ export function CodexLocalAccessModal({
     setNotice('');
     try {
       const filtered = Array.from(selected).filter((accountId) => {
-        const account = oauthAccountById.get(accountId);
+        const account = selectableAccountById.get(accountId);
         if (!account) return false;
-        if (restrictFreeAccounts && isCodexExplicitFreePlanType(account.plan_type)) {
+        if (
+          account.provider === 'codex' &&
+          restrictFreeAccounts &&
+          isCodexExplicitFreePlanType(account.codexAccount?.plan_type)
+        ) {
           return false;
         }
         return true;
+      });
+      console.info('[CodexLocalAccessModal] saving accounts', {
+        selected: Array.from(selected),
+        filtered,
       });
       await onSaveAccounts({
         accountIds: filtered,
@@ -1864,7 +1944,9 @@ export function CodexLocalAccessModal({
                             </span>
                           </div>
                           <div className="codex-local-access-account-stat-block codex-local-access-account-stat-block-quota">
-                            {renderQuotaPreview(presentation, 3)}
+                            {account.codexAccount
+                              ? renderQuotaPreview(buildCodexAccountPresentation(account.codexAccount, t), 3)
+                              : null}
                           </div>
                           <div className="codex-local-access-account-stat-block codex-local-access-account-stat-block-metrics">
                             <div className="codex-local-access-account-stat-metrics">
@@ -1993,9 +2075,9 @@ export function CodexLocalAccessModal({
               </div>
 
               <div className="group-account-list codex-local-access-member-list">
-                {oauthAccounts.length === 0 ? (
+                {selectableAccounts.length === 0 ? (
                   <div className="group-account-empty">
-                    {t('codex.localAccess.modal.empty', '暂无可加入的 OAuth 账号')}
+                    {t('codex.localAccess.modal.empty', '暂无可加入的 Codex / Kiro 账号')}
                   </div>
                 ) : visibleAccounts.length === 0 ? (
                   <div className="group-account-empty">
@@ -2003,9 +2085,10 @@ export function CodexLocalAccessModal({
                   </div>
                 ) : (
                   visibleAccounts.map((account) => {
-                    const presentation = buildCodexAccountPresentation(account, t);
                     const isChecked = selected.has(account.id);
-                    const isFreeAccount = isCodexExplicitFreePlanType(account.plan_type);
+                    const isFreeAccount =
+                      account.provider === 'codex' &&
+                      isCodexExplicitFreePlanType(account.codexAccount?.plan_type);
                     const isFreeSelectionBlocked =
                       isFreeAccount && restrictFreeAccounts && !isChecked;
                     const accountStats = allStatsByAccountId.get(account.id)?.usage;
@@ -2027,12 +2110,15 @@ export function CodexLocalAccessModal({
                         <div className="codex-local-access-member-mainline">
                           <span
                             className="group-account-email"
-                            title={maskAccountText(presentation.displayName)}
+                            title={maskAccountText(account.displayName)}
                           >
-                              {maskAccountText(presentation.displayName)}
+                              {maskAccountText(account.displayName)}
                             </span>
-                          <span className={`tier-badge ${presentation.planClass}`}>
-                              {presentation.planLabel}
+                          <span className={`tier-badge ${account.planClass}`}>
+                              {account.planLabel}
+                            </span>
+                          <span className={`tier-badge ${account.provider === 'kiro' ? 'team' : 'free'}`}>
+                              {account.provider === 'kiro' ? 'Kiro' : 'Codex'}
                             </span>
                           <span className="codex-local-access-member-metric">
                             {t('codex.localAccess.stats.accountRequests', {
@@ -2040,7 +2126,9 @@ export function CodexLocalAccessModal({
                               defaultValue: '{{count}} 次请求',
                             })}
                           </span>
-                          {renderQuotaPreview(presentation, 2)}
+                          {account.codexAccount
+                            ? renderQuotaPreview(buildCodexAccountPresentation(account.codexAccount, t), 2)
+                            : null}
                         </div>
                         </div>
                       </label>

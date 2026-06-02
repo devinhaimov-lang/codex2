@@ -11,6 +11,13 @@ export interface KiroOAuthLoginStartResponse {
   callbackUrl?: string | null;
 }
 
+export interface KiroLocalApiState {
+  enabled: boolean;
+  port?: number | null;
+  base_url?: string | null;
+  model: string;
+}
+
 /** 列出所有 Kiro 账号 */
 export async function listKiroAccounts(): Promise<KiroAccount[]> {
   return await invoke('list_kiro_accounts');
@@ -93,4 +100,12 @@ export async function getKiroAccountsIndexPath(): Promise<string> {
 /** 将 Kiro 账号注入到 Kiro 默认实例 */
 export async function injectKiroToVSCode(accountId: string): Promise<string> {
   return await invoke('inject_kiro_to_vscode', { accountId });
+}
+
+export async function getKiroLocalApiState(): Promise<KiroLocalApiState> {
+  return await invoke('kiro_local_api_get_state');
+}
+
+export async function testKiroLocalApi(): Promise<string> {
+  return await invoke('kiro_local_api_test');
 }

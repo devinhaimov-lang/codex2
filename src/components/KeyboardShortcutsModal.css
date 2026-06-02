@@ -1,0 +1,151 @@
+.shortcut-help-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 11950;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.34);
+  backdrop-filter: blur(8px);
+  -webkit-app-region: no-drag;
+}
+
+.shortcut-help-modal {
+  width: min(720px, 100%);
+  border-radius: 22px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: var(--bg-card);
+  box-shadow: 0 26px 80px rgba(15, 23, 42, 0.24);
+  overflow: hidden;
+}
+
+.shortcut-help-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 22px 16px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.shortcut-help-header h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.shortcut-help-header p {
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.shortcut-help-close {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.shortcut-help-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 22px 22px;
+}
+
+.shortcut-help-group {
+  border: 1px solid var(--border-light);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.shortcut-help-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.shortcut-help-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.shortcut-help-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--border-light);
+}
+
+.shortcut-help-item:first-child {
+  border-top: 0;
+}
+
+.shortcut-help-item-label {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.shortcut-help-item-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.shortcut-help-item-keys kbd {
+  min-height: 26px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.shortcut-help-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 2px 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .shortcut-help-overlay {
+    padding: 12px;
+  }
+
+  .shortcut-help-modal {
+    border-radius: 18px;
+  }
+
+  .shortcut-help-item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .shortcut-help-item-keys {
+    justify-content: flex-start;
+  }
+}
